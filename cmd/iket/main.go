@@ -14,21 +14,12 @@ import (
 	"github.com/bhangun/iket/pkg/api"
 	"github.com/bhangun/iket/pkg/app"
 	"github.com/bhangun/iket/pkg/config"
-	"github.com/bhangun/iket/pkg/core/gateway"
+	"github.com/bhangun/iket/pkg/core/plugin"
+	"github.com/bhangun/iket/pkg/core/provider"
+	"github.com/bhangun/iket/pkg/core/runtime/gateway"
 	"github.com/bhangun/iket/pkg/helper"
 	"github.com/bhangun/iket/pkg/logging"
 	"github.com/bhangun/iket/pkg/metrics"
-	"github.com/bhangun/iket/pkg/plugin"
-	_ "github.com/bhangun/iket/pkg/plugin/circuitbreaker"
-	_ "github.com/bhangun/iket/pkg/plugin/cors"
-	_ "github.com/bhangun/iket/pkg/plugin/ipwhitelist"
-	_ "github.com/bhangun/iket/pkg/plugin/jwt"
-	_ "github.com/bhangun/iket/pkg/plugin/mtls"
-	_ "github.com/bhangun/iket/pkg/plugin/oauth2"
-	_ "github.com/bhangun/iket/pkg/plugin/ratelimit"
-	_ "github.com/bhangun/iket/pkg/plugin/tls"
-	_ "github.com/bhangun/iket/pkg/plugin/validation"
-	_ "github.com/bhangun/iket/pkg/plugin/websocket"
 )
 
 var (
@@ -172,15 +163,23 @@ func main() {
 	metricsCollector := metrics.NewCollector()
 
 	// Use the global plugin registry
-	// registry := plugin.NewRegistry()
-	// registry.RegisterAllGlobal()
+	if err := plugin.InitializeDefaultRegistry(logger); err != nil {
+		logger.Fatal("Failed to initialize plugin registry", logging.Error(err))
+	}
+
+	// Initialize config manager
+	configManager := provider.NewConfigManager(logger, nil)
+
+	// Register file provider
+	fileProvider := provider.NewFileProvider(*configPath, provider.RoleBootstrap, logger)
+	configManager.RegisterProvider(fileProvider)
 
 	// Create gateway with dependencies
 	gw, err := gateway.NewGateway(gateway.Dependencies{
-		Config:   cfg,
-		Logger:   logger,
-		Metrics:  metricsCollector,
-		Registry: plugin.DefaultRegistry,
+		ConfigManager: configManager,
+		Logger:        logger,
+		Metrics:       metricsCollector,
+		Registry:      plugin.DefaultRegistry,
 	}, version)
 	if err != nil {
 		logger.Fatal("Failed to create gateway", logging.Error(err))

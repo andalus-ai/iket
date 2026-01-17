@@ -11,101 +11,58 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bhangun/iket/pkg/plugin"
-
+	"github.com/bhangun/iket/pkg/core/engine"
+	"github.com/bhangun/iket/pkg/logging"
 	"gopkg.in/yaml.v3"
 )
 
 //go:embed swaggerui/*
 var swaggerUIFS embed.FS
 
+// OpenAPIPlugin implements OpenAPI documentation and Swagger UI
 type OpenAPIPlugin struct {
+	name      string
+	priority  int
+	timeout   time.Duration
+	failure   engine.FailureMode
 	specPath  string
 	specData  []byte
 	enabled   bool
 	servePath string
 	format    string // "yaml" or "json"
 	swaggerUI bool
-	// Tag for reflection-based discovery
-	PluginName string `plugin:"type,openapi"`
-	// Health tracking
-	lastHealthCheck time.Time
-	isHealthy       bool
-	loadTime        time.Time
+	logger    *logging.Logger
 }
 
-func NewOpenAPIPlugin() *OpenAPIPlugin {
+// NewOpenAPIPlugin creates a new OpenAPI Documentation plugin
+func NewOpenAPIPlugin(logger *logging.Logger) *OpenAPIPlugin {
 	return &OpenAPIPlugin{
-		PluginName:      "openapi",
-		lastHealthCheck: time.Now(),
-		isHealthy:       true,
-		loadTime:        time.Now(),
+		name:     "openapi",
+		priority: 0, // Documentation, runs at the end or in Rewrite phase
+		timeout:  1 * time.Second,
+		failure:  engine.FailureModeFailOpen,
+		logger:   logger,
 	}
 }
 
-func (p *OpenAPIPlugin) Name() string { return "openapi" }
+func (p *OpenAPIPlugin) Name() string { return p.name }
 
-// Type implements TypedPlugin interface
-func (p *OpenAPIPlugin) Type() plugin.PluginType {
-	return plugin.TransformPlugin // OpenAPI transforms requests/responses
+func (p *OpenAPIPlugin) Phase() engine.Phase {
+	return engine.PhaseRewrite // Catch doc requests early
 }
 
-// Tags implements TaggedPlugin interface
-func (p *OpenAPIPlugin) Tags() map[string]string {
-	return map[string]string{
-		"category": "documentation",
-		"type":     "api-docs",
-		"priority": "low",
-	}
+func (p *OpenAPIPlugin) Priority() int {
+	return p.priority
 }
 
-// Health implements HealthChecker interface
-func (p *OpenAPIPlugin) Health() error {
-	p.lastHealthCheck = time.Now()
-
-	if !p.enabled {
-		return nil // Disabled plugins are considered healthy
-	}
-
-	if p.specPath == "" {
-		p.isHealthy = false
-		return fmt.Errorf("openapi plugin not properly configured: missing spec_path")
-	}
-
-	// Check if spec file still exists and is readable
-	if _, err := os.Stat(p.specPath); err != nil {
-		p.isHealthy = false
-		return fmt.Errorf("openapi spec file not accessible: %w", err)
-	}
-
-	// Check if spec data is valid
-	if len(p.specData) == 0 {
-		p.isHealthy = false
-		return fmt.Errorf("openapi spec data is empty")
-	}
-
-	p.isHealthy = true
-	return nil
+func (p *OpenAPIPlugin) Timeout() time.Duration {
+	return p.timeout
 }
 
-// Status implements StatusReporter interface
-func (p *OpenAPIPlugin) Status() string {
-	if !p.enabled {
-		return "disabled"
-	}
-	if p.isHealthy {
-		return "healthy"
-	}
-	return "unhealthy"
+func (p *OpenAPIPlugin) OnFailure() engine.FailureMode {
+	return p.failure
 }
 
-// Config options:
-//
-//	spec_path: string (required)
-//	enabled: bool (optional, default true)
-//	path: string (optional, default "/openapi")
-//	format: string ("yaml" or "json", default "yaml")
-//	swagger_ui: bool (optional, default false)
 func (p *OpenAPIPlugin) Initialize(config map[string]interface{}) error {
 	enabled := true
 	if v, ok := config["enabled"].(bool); ok {
@@ -113,18 +70,16 @@ func (p *OpenAPIPlugin) Initialize(config map[string]interface{}) error {
 	}
 	p.enabled = enabled
 	if !enabled {
-		p.isHealthy = true // Disabled plugins are healthy
-		return nil         // plugin is disabled
+		return nil
 	}
+
 	pathVal, ok := config["spec_path"].(string)
 	if !ok || pathVal == "" {
-		p.isHealthy = false
 		return nil // no spec path, plugin is a no-op
 	}
 	p.specPath = pathVal
 	data, err := os.ReadFile(pathVal)
 	if err != nil {
-		p.isHealthy = false
 		return err
 	}
 	p.specData = data
@@ -140,68 +95,80 @@ func (p *OpenAPIPlugin) Initialize(config map[string]interface{}) error {
 	if v, ok := config["swagger_ui"].(bool); ok {
 		p.swaggerUI = v
 	}
-	p.isHealthy = true
-	p.loadTime = time.Now()
+
+	p.logger.Info("OpenAPI plugin initialized",
+		logging.String("spec_path", p.specPath),
+		logging.String("serve_path", p.servePath),
+	)
 	return nil
 }
 
-// Middleware implements the pkg/plugin.MiddlewarePlugin interface
-func (p *OpenAPIPlugin) Middleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !p.enabled {
-			next.ServeHTTP(w, r)
-			return
-		}
-		if r.URL.Path == p.servePath {
-			if p.format == "json" {
-				var y interface{}
-				err := yaml.Unmarshal(p.specData, &y)
-				if err != nil {
-					w.WriteHeader(http.StatusInternalServerError)
-					w.Write([]byte("Failed to parse OpenAPI YAML"))
-					return
-				}
-				j, err := json.MarshalIndent(y, "", "  ")
-				if err != nil {
-					w.WriteHeader(http.StatusInternalServerError)
-					w.Write([]byte("Failed to convert OpenAPI to JSON"))
-					return
-				}
-				w.Header().Set("Content-Type", "application/json; charset=UTF-8")
-				w.WriteHeader(http.StatusOK)
-				w.Write(j)
-				return
-			}
-			w.Header().Set("Content-Type", "application/yaml; charset=UTF-8")
-			w.WriteHeader(http.StatusOK)
-			w.Write(p.specData)
-			return
-		}
-		if p.swaggerUI && (r.URL.Path == "/swagger-ui/" || strings.HasPrefix(r.URL.Path, "/swagger-ui/") || r.URL.Path == "/swagger-ui") {
-			if r.URL.Path == "/swagger-ui/" || r.URL.Path == "/swagger-ui" {
-				w.Header().Set("Content-Type", "text/html; charset=UTF-8")
-				w.WriteHeader(http.StatusOK)
-				w.Write([]byte(swaggerUIHTML(p.servePath, p.format)))
-				return
-			}
-			// Serve static assets from embedded FS
-			assetPath := strings.TrimPrefix(r.URL.Path, "/swagger-ui/")
-			if assetPath == "" {
-				assetPath = "index.html"
-			}
-			f, err := swaggerUIFS.Open(path.Join("swaggerui", assetPath))
+func (p *OpenAPIPlugin) Execute(ctx *engine.ExecutionContext) error {
+	if !p.enabled {
+		return nil
+	}
+
+	// Extract HTTP request and response
+	reqVal, ok := ctx.GetState("http_request")
+	if !ok {
+		return fmt.Errorf("http request not found in context")
+	}
+	r := reqVal.(*http.Request)
+
+	respVal, ok := ctx.GetState("http_response")
+	if !ok {
+		return fmt.Errorf("http response not found in context")
+	}
+	w := respVal.(http.ResponseWriter)
+
+	if r.URL.Path == p.servePath {
+		if p.format == "json" {
+			var y interface{}
+			err := yaml.Unmarshal(p.specData, &y)
 			if err != nil {
-				w.WriteHeader(http.StatusNotFound)
-				w.Write([]byte("Swagger UI asset not found"))
-				return
+				return fmt.Errorf("failed to parse OpenAPI YAML: %w", err)
 			}
-			defer f.Close()
-			stat, _ := f.Stat()
-			http.ServeContent(w, r, assetPath, stat.ModTime(), f.(io.ReadSeeker))
-			return
+			j, err := json.MarshalIndent(y, "", "  ")
+			if err != nil {
+				return fmt.Errorf("failed to convert OpenAPI to JSON: %w", err)
+			}
+			w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+			w.WriteHeader(http.StatusOK)
+			w.Write(j)
+			ctx.SetState("response_written", true)
+			return nil
 		}
-		next.ServeHTTP(w, r)
-	})
+		w.Header().Set("Content-Type", "application/yaml; charset=UTF-8")
+		w.WriteHeader(http.StatusOK)
+		w.Write(p.specData)
+		ctx.SetState("response_written", true)
+		return nil
+	}
+	if p.swaggerUI && (r.URL.Path == "/swagger-ui/" || strings.HasPrefix(r.URL.Path, "/swagger-ui/") || r.URL.Path == "/swagger-ui") {
+		if r.URL.Path == "/swagger-ui/" || r.URL.Path == "/swagger-ui" {
+			w.Header().Set("Content-Type", "text/html; charset=UTF-8")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(swaggerUIHTML(p.servePath, p.format)))
+			ctx.SetState("response_written", true)
+			return nil
+		}
+		// Serve static assets from embedded FS
+		assetPath := strings.TrimPrefix(r.URL.Path, "/swagger-ui/")
+		if assetPath == "" {
+			assetPath = "index.html"
+		}
+		f, err := swaggerUIFS.Open(path.Join("swaggerui", assetPath))
+		if err != nil {
+			return fmt.Errorf("swagger UI asset not found: %w", err)
+		}
+		defer f.Close()
+		stat, _ := f.Stat()
+		http.ServeContent(w, r, assetPath, stat.ModTime(), f.(io.ReadSeeker))
+		ctx.SetState("response_written", true)
+		return nil
+	}
+
+	return nil
 }
 
 func swaggerUIHTML(specPath, format string) string {

@@ -1,50 +1,78 @@
-package main
+package metrics
 
 import (
-	"log"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/bhangun/iket/pkg/core/engine"
+	"github.com/bhangun/iket/pkg/logging"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// PrometheusPlugin implements a metrics collection plugin using Prometheus
+// PrometheusPlugin implements metrics collection using Prometheus
 type PrometheusPlugin struct {
 	name            string
+	priority        int
+	timeout         time.Duration
+	failure         engine.FailureMode
 	metricsPath     string
 	metricsPort     int
 	server          *http.Server
 	requestCounter  *prometheus.CounterVec
 	requestDuration *prometheus.HistogramVec
 	responseSize    *prometheus.SummaryVec
+	logger          *logging.Logger
 }
 
-// Name returns the plugin name
-func (p PrometheusPlugin) Name() string {
-	return p.name
+// NewPrometheusPlugin creates a new Prometheus metrics plugin
+func NewPrometheusPlugin(logger *logging.Logger) *PrometheusPlugin {
+	return &PrometheusPlugin{
+		name:     "prometheus",
+		priority: 0, // Last priority in Log phase
+		timeout:  1 * time.Second,
+		failure:  engine.FailureModeFailOpen,
+		logger:   logger,
+	}
 }
 
-// Initialize sets up the Prometheus metrics with the provided configuration
+func (p *PrometheusPlugin) Name() string { return p.name }
+
+func (p *PrometheusPlugin) Phase() engine.Phase {
+	return engine.PhaseLog
+}
+
+func (p *PrometheusPlugin) Priority() int {
+	return p.priority
+}
+
+func (p *PrometheusPlugin) Timeout() time.Duration {
+	return p.timeout
+}
+
+func (p *PrometheusPlugin) OnFailure() engine.FailureMode {
+	return p.failure
+}
+
 func (p *PrometheusPlugin) Initialize(config map[string]interface{}) error {
-	p.name = "prometheus-metrics"
-
 	// Set default values
 	p.metricsPath = "/metrics"
 	p.metricsPort = 9090
 
 	// Override with provided configuration
-	if path, ok := config["metricsPath"].(string); ok {
+	if path, ok := config["metrics_path"].(string); ok {
 		p.metricsPath = path
 	}
 
-	if port, ok := config["metricsPort"].(float64); ok {
+	if port, ok := config["metrics_port"].(float64); ok {
 		p.metricsPort = int(port)
 	}
 
-	// Initialize metrics
+	// Initialize metrics (ensure they are only registered once if Initialize is called multiple times)
+	// For simplicity, we assume one instance for now or use a global registry
 	p.requestCounter = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "gateway_http_requests_total",
@@ -74,12 +102,13 @@ func (p *PrometheusPlugin) Initialize(config map[string]interface{}) error {
 	// Start metrics server
 	go p.startMetricsServer()
 
-	log.Printf("Prometheus metrics plugin initialized: serving metrics at :%d%s",
-		p.metricsPort, p.metricsPath)
+	p.logger.Info("Prometheus metrics plugin initialized",
+		logging.Int("port", p.metricsPort),
+		logging.String("path", p.metricsPath),
+	)
 	return nil
 }
 
-// startMetricsServer starts a separate HTTP server for exposing Prometheus metrics
 func (p *PrometheusPlugin) startMetricsServer() {
 	mux := http.NewServeMux()
 	mux.Handle(p.metricsPath, promhttp.Handler())
@@ -90,63 +119,37 @@ func (p *PrometheusPlugin) startMetricsServer() {
 	}
 
 	if err := p.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Printf("Failed to start metrics server: %v", err)
+		p.logger.Error("Failed to start metrics server", err)
 	}
 }
 
-// Middleware returns a middleware function that collects metrics
-func (p *PrometheusPlugin) Middleware() func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			start := time.Now()
+func (p *PrometheusPlugin) Execute(ctx *engine.ExecutionContext) error {
+	// Metrics are usually recorded after the request is finished.
+	// We can use context states to gather information.
 
-			// Create a response writer wrapper to capture metrics
-			mw := newMetricsResponseWriter(w)
+	method, _ := ctx.GetState("request_method")
+	path, _ := ctx.GetState("request_path")
 
-			// Process the request
-			next.ServeHTTP(mw, r)
-
-			// Record metrics
-			duration := time.Since(start).Seconds()
-			statusCode := strconv.Itoa(mw.statusCode)
-
-			p.requestCounter.WithLabelValues(r.Method, r.URL.Path, statusCode).Inc()
-			p.requestDuration.WithLabelValues(r.Method, r.URL.Path).Observe(duration)
-			p.responseSize.WithLabelValues(r.Method, r.URL.Path).Observe(float64(mw.bytesWritten))
-		})
+	// Try to get status code from upstream_status or similar
+	status := "200"
+	if s, ok := ctx.GetState("upstream_status"); ok {
+		status = strconv.Itoa(s.(int))
+	} else if ctx.LastError != nil {
+		status = "500"
 	}
+
+	p.requestCounter.WithLabelValues(fmt.Sprint(method), fmt.Sprint(path), status).Inc()
+	p.requestDuration.WithLabelValues(fmt.Sprint(method), fmt.Sprint(path)).Observe(ctx.Duration().Seconds())
+
+	// Response size handling would require more integration, skipping for now or use placeholder
+	p.responseSize.WithLabelValues(fmt.Sprint(method), fmt.Sprint(path)).Observe(0)
+
+	return nil
 }
 
-// metricsResponseWriter is a custom ResponseWriter that captures metrics
-type metricsResponseWriter struct {
-	http.ResponseWriter
-	statusCode   int
-	bytesWritten int
-}
-
-func newMetricsResponseWriter(w http.ResponseWriter) *metricsResponseWriter {
-	return &metricsResponseWriter{w, http.StatusOK, 0}
-}
-
-func (mw *metricsResponseWriter) WriteHeader(code int) {
-	mw.statusCode = code
-	mw.ResponseWriter.WriteHeader(code)
-}
-
-func (mw *metricsResponseWriter) Write(b []byte) (int, error) {
-	n, err := mw.ResponseWriter.Write(b)
-	mw.bytesWritten += n
-	return n, err
-}
-
-// Shutdown stops the metrics server
-func (p *PrometheusPlugin) Shutdown() error {
-	log.Println("Shutting down Prometheus metrics plugin")
+func (p *PrometheusPlugin) Close() error {
 	if p.server != nil {
 		return p.server.Close()
 	}
 	return nil
 }
-
-// Plugin is the exported symbol for the plugin system to load
-var Plugin PrometheusPlugin

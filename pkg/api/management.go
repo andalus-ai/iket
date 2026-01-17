@@ -12,8 +12,8 @@ import (
 	"github.com/bhangun/iket/pkg/config"
 	"github.com/bhangun/iket/pkg/logging"
 
-	"github.com/bhangun/iket/pkg/core/gateway"
-	"github.com/bhangun/iket/pkg/plugin"
+	"github.com/bhangun/iket/pkg/core/plugin"
+	"github.com/bhangun/iket/pkg/core/runtime/gateway"
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
@@ -542,16 +542,12 @@ func (api *ManagementAPI) listRoutes(w http.ResponseWriter, r *http.Request) {
 	routes := cfg.GetAllRoutesFromServices(api.logger)
 	routeInfos := make([]RouteInfo, 0, len(routes))
 	for i, route := range routes {
-		timeout := 0
-		if route.Timeout != nil {
-			timeout = int(route.Timeout.Seconds())
-		}
-		enabled := !route.Enabled
-		// Find parent service for this route
-		service := cfg.FindServiceForRoute(route.Path, "")
+		timeout := int(route.Timeout.Seconds())
+		enabled := route.Enabled
+
 		backend := ""
-		if service != nil {
-			backend = service.Host
+		if len(route.Backends) > 0 {
+			backend = route.Backends[0].URLPattern
 		}
 		routeInfo := RouteInfo{
 			ID:          fmt.Sprintf("route-%d", i+1),
