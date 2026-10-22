@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  # Iket API Gateway
+  iket:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        - VERSION=${IKET_VERSION:-dev}
+    container_name: iket
+    restart: unless-stopped
+    ports:
+      - "7100:8080" # Management / HTTP
+      - "8443:8443" # HTTPS / mTLS
+      - "9443:9443" # HTTPS enrollment bootstrap
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - TZ=UTC
+    volumes:
+      - ../config:/app/config:ro
+      - ../certs:/app/certs:rw
+      - ../logs:/app/logs:rw
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - iket-network
+
+  # Example of how to use iket from another container or as a one-off
+  # docker-compose run cli gateway status
+  cli:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: iket-control
+    image: iket:cli
+    entrypoint: ["iket"]
+    environment:
+      - TZ=UTC
+      - IKET_SERVER_URL=https://iket:8443
+      - IKET_CA_FILE=/app/certs/ca.crt
+      - IKET_CERT_FILE=/app/certs/client.crt
+      - IKET_KEY_FILE=/app/certs/client.key
+    volumes:
+      - ../config:/app/config:ro
+      - ../certs:/app/certs:ro
+    networks:
+      - iket-network
+    depends_on:
+      - iket
+
+networks:
+  iket-network:
+    driver: bridge

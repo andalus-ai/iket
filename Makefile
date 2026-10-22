@@ -8,12 +8,18 @@ help: ## Show this help message
 	@echo "Iket Gateway - Available targets:"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-VERSION := $(shell git describe --tags --abbrev=0)
+VERSION := $(shell git describe --tags --abbrev=0 2>/dev/null || echo "0.1.0")
+IKET_VERSION := $(shell git describe --tags --always 2>/dev/null || echo "dev")
 
 # Build targets
 build: ## Build the main gateway binary
 	@echo "Building Iket Gateway..."
-	go build -ldflags "-X 'github.com/bhangun/iket/pkg/app.Version=$(VERSION)'" -o bin/iket ./cmd/iket/main.go
+	go build -ldflags "-X 'github.com/bhangun/iket/pkg/app.Version=$(VERSION)'" -o bin/iket-server ./cmd/iket/main.go
+	@echo "Build complete: bin/iket-server"
+
+build-cli: ## Build the CLI binary
+	@echo "Building Iket CLI..."
+	go build -o bin/iket ./cmd/iket-cli/*.go
 	@echo "Build complete: bin/iket"
 
 build-basic: ## Build with basic tags (no storage dependencies)
@@ -76,38 +82,36 @@ vet: ## Run go vet
 
 # Docker targets
 docker-build: ## Build Docker image
-	@echo "Building Docker image..."
-	@export IKET_VERSION=$$(git describe --tags --always); \
-	echo "Building with version: $$IKET_VERSION"; \
-	docker build --build-arg VERSION=$$IKET_VERSION -f Dockerfile.prod -t iket:latest .
+	@echo "Building Docker image (v$(IKET_VERSION))..."
+	docker build --build-arg VERSION=$(IKET_VERSION) -f docker/Dockerfile -t iket:latest .
 
 docker-build-basic: ## Build basic Docker image
 	@echo "Building basic Docker image..."
-	docker build -f Dockerfile.basic -t iket:basic .
+	docker build -f docker/Dockerfile -t iket:basic .
 
 docker-run: ## Run with docker-compose
-	@echo "Starting services with docker-compose..."
-	@export IKET_VERSION=$$(git describe --tags --always); \
-	echo "Running with version: $$IKET_VERSION"; \
-	IKET_VERSION=$$IKET_VERSION docker-compose -f docker-compose.prod.yaml up -d
+	@echo "Starting services with docker-compose (v$(IKET_VERSION))..."
+	IKET_VERSION=$(IKET_VERSION) docker-compose -f docker/docker-compose.yaml up -d
+
+docker-run-prebuilt: ## Run with prebuilt image using docker-compose
+	@echo "Starting prebuilt services with docker-compose..."
+	docker-compose -f docker/docker-compose.prebuilt.yaml up -d
 
 docker-up: ## Run with docker-compose (auto version)
-	@echo "Starting services with docker-compose (auto version)..."
-	@export IKET_VERSION=$$(git describe --tags --always); \
-	echo "Running with version: $$IKET_VERSION"; \
-	IKET_VERSION=$$IKET_VERSION docker-compose up -d --build
+	@echo "Starting services with docker-compose (v$(IKET_VERSION))..."
+	IKET_VERSION=$(IKET_VERSION) docker-compose -f docker/docker-compose.yaml up -d --build
 
 docker-run-basic: ## Run basic setup with docker-compose
 	@echo "Starting basic services..."
-	docker-compose -f docker-compose.basic.yaml up -d
+	IKET_VERSION=$(IKET_VERSION) docker-compose -f docker/docker-compose.yaml up -d
 
 docker-stop: ## Stop docker-compose services
 	@echo "Stopping services..."
-	docker-compose -f docker-compose.prod.yaml down
-	docker-compose -f docker-compose.basic.yaml down
+	docker-compose -f docker/docker-compose.yaml down
+	docker-compose -f docker/docker-compose.prebuilt.yaml down
 
 docker-logs: ## Show docker-compose logs
-	docker-compose -f docker-compose.prod.yaml logs -f
+	docker-compose -f docker/docker-compose.yaml logs -f
 
 # Development targets
 dev: ## Start development server
@@ -140,8 +144,8 @@ clean: ## Clean build artifacts
 
 clean-docker: ## Clean Docker images and containers
 	@echo "Cleaning Docker artifacts..."
-	docker-compose -f docker-compose.prod.yaml down -v --rmi all
-	docker-compose -f docker-compose.basic.yaml down -v --rmi all
+	docker-compose -f docker/docker-compose.yaml down -v --rmi all
+	docker-compose -f docker/docker-compose.prebuilt.yaml down -v --rmi all
 	docker system prune -f
 	@echo "Docker cleanup complete"
 
@@ -163,22 +167,32 @@ release: ## Create release build
 	@version=$$(git describe --tags --always --dirty); \
 	echo "Building version: $$version"; \
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
-		-ldflags="-w -s -X iket/internal/app.Version=$$version" \
-		-o releases/iket-$$version-linux-amd64 ./; \
+		-ldflags="-w -s -X github.com/bhangun/iket/pkg/app.Version=$$version" \
+		-o releases/iket-linux-amd64 ./cmd/iket-cli; \
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build \
+		-ldflags="-w -s -X github.com/bhangun/iket/pkg/app.Version=$$version" \
+		-o releases/iket-linux-arm64 ./cmd/iket-cli; \
 	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build \
-		-ldflags="-w -s -X iket/internal/app.Version=$$version" \
-		-o releases/iket-$$version-darwin-amd64 ./; \
+		-ldflags="-w -s -X github.com/bhangun/iket/pkg/app.Version=$$version" \
+		-o releases/iket-darwin-amd64 ./cmd/iket-cli; \
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build \
+		-ldflags="-w -s -X github.com/bhangun/iket/pkg/app.Version=$$version" \
+		-o releases/iket-darwin-arm64 ./cmd/iket-cli; \
 	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build \
-		-ldflags="-w -s -X iket/internal/app.Version=$$version" \
-		-o releases/iket-$$version-windows-amd64.exe ./; \
+		-ldflags="-w -s -X github.com/bhangun/iket/pkg/app.Version=$$version" \
+		-o releases/iket-windows-amd64.exe ./cmd/iket-cli; \
+	CGO_ENABLED=1 GOOS=$$(go env GOOS) GOARCH=$$(go env GOARCH) go build \
+		-ldflags="-w -s -X github.com/bhangun/iket/pkg/app.Version=$$version" \
+		-o releases/iket-server-$$(go env GOOS)-$$(go env GOARCH) ./cmd/iket; \
 	echo "Release builds complete in releases/"
 
 # Monitoring targets
-monitor: ## Start monitoring tools
+monitor: ## Start monitoring tools (TODO: Add docker-compose.monitoring.yaml)
 	@echo "Starting monitoring..."
 	@echo "Prometheus: http://localhost:9090"
 	@echo "Grafana: http://localhost:3000"
-	docker-compose -f docker-compose.monitoring.yaml up -d
+	@echo "Warning: docker-compose.monitoring.yaml not found."
+	# docker-compose -f docker/docker-compose.monitoring.yaml up -d
 
 # Database targets
 db-migrate: ## Run database migrations
