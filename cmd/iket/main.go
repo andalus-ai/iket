@@ -14,12 +14,12 @@ import (
 	"github.com/bhangun/iket/pkg/api"
 	"github.com/bhangun/iket/pkg/app"
 	"github.com/bhangun/iket/pkg/config"
-	"github.com/bhangun/iket/pkg/core/plugin"
 	"github.com/bhangun/iket/pkg/core/provider"
-	"github.com/bhangun/iket/pkg/core/runtime/gateway"
+	"github.com/bhangun/iket/pkg/core/runtime"
 	"github.com/bhangun/iket/pkg/helper"
 	"github.com/bhangun/iket/pkg/logging"
 	"github.com/bhangun/iket/pkg/metrics"
+	"github.com/bhangun/iket/pkg/plugin"
 )
 
 var (
@@ -175,7 +175,7 @@ func main() {
 	configManager.RegisterProvider(fileProvider)
 
 	// Create gateway with dependencies
-	gw, err := gateway.NewGateway(gateway.Dependencies{
+	gw, err := runtime.NewGateway(runtime.Dependencies{
 		ConfigManager: configManager,
 		Logger:        logger,
 		Metrics:       metricsCollector,

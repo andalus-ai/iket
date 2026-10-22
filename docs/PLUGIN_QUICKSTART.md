@@ -24,91 +24,69 @@ Create a file called `plugin.go`:
 package main
 
 import (
-    "encoding/json"
     "fmt"
-    "net/http"
-    "sync"
+    "time"
+    "github.com/bhangun/iket/pkg/core/engine"
+    "github.com/bhangun/iket/pkg/logging"
 )
 
 // MyFirstPlugin implements a simple request logger
 type MyFirstPlugin struct {
     enabled bool
-    mu      sync.RWMutex
+    logger  *logging.Logger
 }
 
-// Name returns the plugin name
+func NewMyFirstPlugin(logger *logging.Logger) *MyFirstPlugin {
+    return &MyFirstPlugin{logger: logger}
+}
+
+// Name returns the unique identifier
 func (p *MyFirstPlugin) Name() string {
     return "my_first_plugin"
 }
 
+// Phase returns the execution phase (Rewrite, Auth, Traffic, etc.)
+func (p *MyFirstPlugin) Phase() engine.Phase {
+    return engine.PhaseTraffic
+}
+
+// Priority determines execution order (higher = earlier)
+func (p *MyFirstPlugin) Priority() int {
+    return 100
+}
+
 // Initialize sets up the plugin with configuration
 func (p *MyFirstPlugin) Initialize(config map[string]interface{}) error {
-    p.mu.Lock()
-    defer p.mu.Unlock()
-    
-    // Default to enabled
     p.enabled = true
-    
-    // Load configuration
     if enabled, ok := config["enabled"].(bool); ok {
         p.enabled = enabled
     }
+    return nil
+}
+
+// Execute processes the request using the ExecutionContext
+func (p *MyFirstPlugin) Execute(ctx *engine.ExecutionContext) error {
+    if !p.enabled {
+        return nil
+    }
     
-    fmt.Printf("MyFirstPlugin initialized with enabled=%t\n", p.enabled)
+    p.logger.Info("Hello from MyFirstPlugin!", 
+        logging.String("request_id", ctx.RequestID),
+        logging.String("path", ctx.RequestPath),
+    )
+    
     return nil
 }
 
-// Middleware processes HTTP requests
-func (p *MyFirstPlugin) Middleware(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        if !p.enabled {
-            next.ServeHTTP(w, r)
-            return
-        }
-        
-        // Log the request
-        fmt.Printf("Request: %s %s\n", r.Method, r.URL.Path)
-        
-        // Add a custom header
-        w.Header().Set("X-My-Plugin", "Hello from MyFirstPlugin!")
-        
-        // Continue to next handler
-        next.ServeHTTP(w, r)
-    })
+// OnFailure defines behavior on error
+func (p *MyFirstPlugin) OnFailure() engine.FailureMode {
+    return engine.FailureModeFailOpen
 }
 
-// Type returns the plugin type
-func (p *MyFirstPlugin) Type() string {
-    return "transform"
+// Timeout returns the max execution time
+func (p *MyFirstPlugin) Timeout() time.Duration {
+    return 1 * time.Second
 }
-
-// Tags returns plugin metadata
-func (p *MyFirstPlugin) Tags() map[string]string {
-    return map[string]string{
-        "type":       "my_first_plugin",
-        "category":   "example",
-        "middleware": "true",
-    }
-}
-
-// Health checks if the plugin is healthy
-func (p *MyFirstPlugin) Health() error {
-    if !p.enabled {
-        return fmt.Errorf("plugin is disabled")
-    }
-    return nil
-}
-
-// Status returns human-readable status
-func (p *MyFirstPlugin) Status() string {
-    if !p.enabled {
-        return "MyFirstPlugin: Disabled"
-    }
-    return "MyFirstPlugin: Enabled"
-}
-
-// This is required for dynamic loading
-var Plugin = &MyFirstPlugin{}
 ```
 
 ## Step 3: Build the Plugin

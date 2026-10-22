@@ -5,8 +5,8 @@ import (
 	"sort"
 
 	"github.com/bhangun/iket/pkg/core/engine"
-	"github.com/bhangun/iket/pkg/core/plugin"
 	"github.com/bhangun/iket/pkg/logging"
+	"github.com/bhangun/iket/pkg/plugin"
 )
 
 // PipelineBuilder builds executable pipelines from configuration

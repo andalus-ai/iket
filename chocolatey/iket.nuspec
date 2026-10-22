@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>iket</id>
+    <version>0.0.0</version>
+    <packageSourceUrl>https://github.com/bhangun/iket</packageSourceUrl>
+    <owners>bhangun</owners>
+    <title>Iket API Gateway</title>
+    <authors>bhangun</authors>
+    <projectUrl>https://github.com/bhangun/iket</projectUrl>
+    <iconUrl>https://raw.githubusercontent.com/bhangun/iket/main/docs/logo.png</iconUrl>
+    <copyright>Copyright (c) 2025 bhangun</copyright>
+    <licenseUrl>https://github.com/bhangun/iket/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <projectSourceUrl>https://github.com/bhangun/iket</projectSourceUrl>
+    <docsUrl>https://github.com/bhangun/iket/blob/main/README.md</docsUrl>
+    <bugTrackerUrl>https://github.com/bhangun/iket/issues</bugTrackerUrl>
+    <tags>api gateway proxy golang cli</tags>
+    <summary>Iket API Gateway - Lightweight, extensible, pluggable API Gateway</summary>
+    <description>
+Iket is a lightweight, extensible, pluggable API Gateway written in Go. It supports modern gateway features such as rate-limiting, JWT authentication, WebSockets, middleware chaining, hot-reloadable plugins, and more.
+
+## Features
+
+- HTTP server with configurable port
+- CLI client to interact with the server
+- Optimized Docker multi-stage build
+- Docker Compose setup
+- Makefile for common tasks
+- Reverse proxy for HTTP APIs
+- Route-based plugin system
+- Per-route authentication and rate limiting
+- Wildcard and prefix routing
+- Built-in support for Basic Auth and Client Credential authentication
+    </description>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>

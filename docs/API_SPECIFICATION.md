@@ -171,22 +171,20 @@ GET /plugins
   "plugins": [
     {
       "name": "rate_limiter",
-      "type": "ratelimit",
+      "phase": "traffic",
       "enabled": true,
       "status": "healthy",
       "tags": {
-        "category": "security",
-        "middleware": "true"
+        "category": "security"
       }
     },
     {
       "name": "jwt_auth",
-      "type": "auth",
+      "phase": "auth",
       "enabled": true,
       "status": "healthy",
       "tags": {
-        "category": "auth",
-        "middleware": "true"
+        "category": "auth"
       }
     }
   ]
@@ -202,7 +200,7 @@ GET /plugins/{name}
 ```json
 {
   "name": "rate_limiter",
-  "type": "ratelimit",
+  "phase": "traffic",
   "enabled": true,
   "status": "healthy",
   "config": {

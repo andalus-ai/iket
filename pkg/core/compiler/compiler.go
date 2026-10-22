@@ -6,9 +6,9 @@ import (
 	"sync"
 
 	"github.com/bhangun/iket/pkg/core/engine"
-	"github.com/bhangun/iket/pkg/core/plugin"
 	"github.com/bhangun/iket/pkg/core/provider"
 	"github.com/bhangun/iket/pkg/logging"
+	"github.com/bhangun/iket/pkg/plugin"
 )
 
 // CompiledConfig represents the final, execution-ready configuration

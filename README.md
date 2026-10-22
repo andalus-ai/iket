@@ -32,6 +32,28 @@
 
 ### Installation
 
+There are several ways to install Iket:
+
+#### Using Homebrew (macOS)
+
+```bash
+brew install bhangun/homebrew-tap/iket
+```
+
+#### Using Chocolatey (Windows)
+
+```powershell
+choco install iket
+```
+
+#### Using curl (macOS/Linux)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/bhangun/iket/main/scripts/install.sh | bash
+```
+
+#### From source
+
 ```bash
 git clone https://github.com/bhangun/iket
 go build -o iket ./cmd/iket
@@ -123,23 +145,50 @@ timeout: 10s
 
 ## 🔌 Plugin System
 
+### Architecture
+
+Iket uses a **Phase-Based Execution Engine**. Each request flows through a series of deterministic phases:
+
+1. **Rewrite**: URL and path manipulations.
+2. **Auth**: Authentication (JWT, mTLS, OAuth2).
+3. **Policy**: Authorization and policy enforcement (OPA).
+4. **Traffic**: Rate limiting, circuit breaking, validation.
+5. **Upstream**: Proxying to the backend service.
+6. **Response**: Post-processing and response transformation.
+7. **Log**: Access logging and metrics collection.
+
 ### Interfaces
 
-* `Plugin`, 
+Plugins must implement the `engine.PhasePlugin` interface:
 
+```go
+type PhasePlugin interface {
+    Name() string
+    Phase() Phase
+    Priority() int
+    Execute(ctx *ExecutionContext) error
+    OnFailure() FailureMode
+    Initialize(config map[string]interface{}) error
+    Timeout() time.Duration
+}
+```
 
 ### Registering a Plugin
 
+Plugins are registered centrally in the `plugin.Registry`:
+
 ```go
-registry.Register(&MyPlugin{})
+registry.RegisterFactory("my_plugin", func(logger *logging.Logger, config map[string]interface{}) (engine.PhasePlugin, error) {
+    return myplugin.NewMyPlugin(logger), nil
+})
 ```
 
 ---
 
 ## 🔄 Plugin Lifecycle
 
-* `OnStart()`, `OnShutdown()`
-* `Reload(config)`
+* `Initialize(config)`: Configures the plugin instance.
+* `Execute(ctx)`: Processes the request/response within a specific phase.
 
 ---
 

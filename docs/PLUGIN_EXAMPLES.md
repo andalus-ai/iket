@@ -1,269 +1,181 @@
 # Plugin Examples
 
-This document provides practical examples of custom plugins for the Iket API Gateway.
+This document provides practical examples of custom plugins for the Iket API Gateway using the `PhasePlugin` architecture.
 
 ## Example 1: Simple Request Counter Plugin
+
+This plugin increments a counter for every request in the `Traffic` phase.
 
 ```go
 package requestcounter
 
 import (
-    "encoding/json"
-    "fmt"
-    "net/http"
-    "sync"
     "sync/atomic"
+    "time"
+
+    "github.com/bhangun/iket/pkg/core/engine"
+    "github.com/bhangun/iket/pkg/logging"
 )
 
 type RequestCounterPlugin struct {
     enabled      bool
     requestCount int64
-    mu           sync.RWMutex
+    logger       *logging.Logger
 }
 
-func (p *RequestCounterPlugin) Name() string {
-    return "request_counter"
+func NewRequestCounterPlugin(logger *logging.Logger) *RequestCounterPlugin {
+    return &RequestCounterPlugin{logger: logger}
 }
 
-func (p *RequestCounterPlugin) Type() string {
-    return "observability"
-}
+func (p *RequestCounterPlugin) Name() string { return "request_counter" }
+func (p *RequestCounterPlugin) Phase() engine.Phase { return engine.PhaseTraffic }
+func (p *RequestCounterPlugin) Priority() int { return 100 }
+func (p *RequestCounterPlugin) Timeout() time.Duration { return 1 * time.Second }
+func (p *RequestCounterPlugin) OnFailure() engine.FailureMode { return engine.FailureModeFailOpen }
 
 func (p *RequestCounterPlugin) Initialize(config map[string]interface{}) error {
-    p.mu.Lock()
-    defer p.mu.Unlock()
-    
     p.enabled = true
     if enabled, ok := config["enabled"].(bool); ok {
         p.enabled = enabled
     }
-    
     return nil
 }
 
-func (p *RequestCounterPlugin) Middleware(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        if !p.enabled {
-            next.ServeHTTP(w, r)
-            return
-        }
-        
-        // Increment counter
-        atomic.AddInt64(&p.requestCount, 1)
-        
-        // Add header with current count
-        w.Header().Set("X-Request-Count", fmt.Sprintf("%d", atomic.LoadInt64(&p.requestCount)))
-        
-        next.ServeHTTP(w, r)
-    })
-}
-
-func (p *RequestCounterPlugin) Tags() map[string]string {
-    return map[string]string{
-        "type":       "request_counter",
-        "category":   "observability",
-        "middleware": "true",
-    }
-}
-
-func (p *RequestCounterPlugin) Health() error {
+func (p *RequestCounterPlugin) Execute(ctx *engine.ExecutionContext) error {
     if !p.enabled {
-        return fmt.Errorf("plugin is disabled")
+        return nil
     }
-    return nil
-}
 
-func (p *RequestCounterPlugin) Status() string {
-    return fmt.Sprintf("RequestCounter: enabled=%t, count=%d", p.enabled, atomic.LoadInt64(&p.requestCount))
+    // Increment counter
+    count := atomic.AddInt64(&p.requestCount, 1)
+    
+    // Log the count
+    p.logger.Info("Request count updated", 
+        logging.Int64("count", count),
+        logging.String("request_id", ctx.RequestID),
+    )
+
+    return nil
 }
 ```
 
 ## Example 2: API Key Authentication Plugin
 
+This plugin validates an API key provided in the header during the `Auth` phase.
+
 ```go
 package apikey
 
 import (
-    "context"
-    "encoding/json"
     "fmt"
-    "net/http"
-    "strings"
-    "sync"
+    "time"
+
+    "github.com/bhangun/iket/pkg/core/engine"
+    "github.com/bhangun/iket/pkg/logging"
 )
 
 type APIKeyPlugin struct {
     enabled bool
     keys    map[string]string // key -> user mapping
-    mu      sync.RWMutex
+    logger  *logging.Logger
 }
 
-func (p *APIKeyPlugin) Name() string {
-    return "api_key"
+func NewAPIKeyPlugin(logger *logging.Logger) *APIKeyPlugin {
+    return &APIKeyPlugin{
+        keys:   make(map[string]string),
+        logger: logger,
+    }
 }
 
-func (p *APIKeyPlugin) Type() string {
-    return "auth"
-}
+func (p *APIKeyPlugin) Name() string { return "api_key" }
+func (p *APIKeyPlugin) Phase() engine.Phase { return engine.PhaseAuth }
+func (p *APIKeyPlugin) Priority() int { return 90 }
+func (p *APIKeyPlugin) Timeout() time.Duration { return 2 * time.Second }
+func (p *APIKeyPlugin) OnFailure() engine.FailureMode { return engine.FailureModeDeny }
 
 func (p *APIKeyPlugin) Initialize(config map[string]interface{}) error {
-    p.mu.Lock()
-    defer p.mu.Unlock()
-    
     p.enabled = true
-    p.keys = make(map[string]string)
-    
     if enabled, ok := config["enabled"].(bool); ok {
         p.enabled = enabled
     }
     
-    // Load API keys from config
     if keys, ok := config["keys"].(map[string]interface{}); ok {
-        for key, user := range keys {
-            if userStr, ok := user.(string); ok {
-                p.keys[key] = userStr
+        for k, v := range keys {
+            if user, ok := v.(string); ok {
+                p.keys[k] = user
             }
         }
     }
-    
     return nil
 }
 
-func (p *APIKeyPlugin) Middleware(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        if !p.enabled {
-            next.ServeHTTP(w, r)
-            return
-        }
-        
-        // Extract API key from header
-        apiKey := r.Header.Get("X-API-Key")
-        if apiKey == "" {
-            p.writeError(w, "Missing API key", http.StatusUnauthorized)
-            return
-        }
-        
-        // Validate API key
-        user, valid := p.validateAPIKey(apiKey)
-        if !valid {
-            p.writeError(w, "Invalid API key", http.StatusUnauthorized)
-            return
-        }
-        
-        // Add user to context
-        ctx := context.WithValue(r.Context(), "user", user)
-        next.ServeHTTP(w, r.WithContext(ctx))
-    })
-}
-
-func (p *APIKeyPlugin) validateAPIKey(key string) (string, bool) {
-    p.mu.RLock()
-    defer p.mu.RUnlock()
-    
-    user, exists := p.keys[key]
-    return user, exists
-}
-
-func (p *APIKeyPlugin) writeError(w http.ResponseWriter, message string, statusCode int) {
-    w.Header().Set("Content-Type", "application/json")
-    w.WriteHeader(statusCode)
-    response := map[string]interface{}{
-        "error":   "API Key Error",
-        "message": message,
-    }
-    json.NewEncoder(w).Encode(response)
-}
-
-func (p *APIKeyPlugin) Tags() map[string]string {
-    return map[string]string{
-        "type":       "api_key",
-        "category":   "auth",
-        "middleware": "true",
-    }
-}
-
-func (p *APIKeyPlugin) Health() error {
-    p.mu.RLock()
-    defer p.mu.RUnlock()
-    
+func (p *APIKeyPlugin) Execute(ctx *engine.ExecutionContext) error {
     if !p.enabled {
-        return fmt.Errorf("plugin is disabled")
+        return nil
     }
-    
-    if len(p.keys) == 0 {
-        return fmt.Errorf("no API keys configured")
+
+    apiKey := ctx.Request.Header.Get("X-API-Key")
+    if apiKey == "" {
+        return fmt.Errorf("missing API key")
     }
+
+    user, exists := p.keys[apiKey]
+    if !exists {
+        return fmt.Errorf("invalid API key")
+    }
+
+    // Store user info in context for downstream plugins
+    ctx.SetState("user", user)
     
+    p.logger.Debug("User authenticated", logging.String("user", user))
     return nil
-}
-
-func (p *APIKeyPlugin) Status() string {
-    p.mu.RLock()
-    defer p.mu.RUnlock()
-    
-    if !p.enabled {
-        return "APIKey: Disabled"
-    }
-    
-    return fmt.Sprintf("APIKey: Enabled (%d keys configured)", len(p.keys))
 }
 ```
 
-## Example 3: Request/Response Transformation Plugin
+## Example 3: Request Transformation Plugin
+
+This plugin modifies request headers in the `Rewrite` phase.
 
 ```go
 package transformer
 
 import (
-    "bytes"
-    "encoding/json"
-    "io"
-    "net/http"
-    "strings"
-    "sync"
+    "time"
+    "github.com/bhangun/iket/pkg/core/engine"
 )
 
 type TransformerPlugin struct {
-    enabled     bool
-    addHeaders  map[string]string
+    enabled       bool
+    addHeaders    map[string]string
     removeHeaders []string
-    mu          sync.RWMutex
 }
 
-func (p *TransformerPlugin) Name() string {
-    return "transformer"
-}
-
-func (p *TransformerPlugin) Type() string {
-    return "transform"
-}
+func (p *TransformerPlugin) Name() string { return "transformer" }
+func (p *TransformerPlugin) Phase() engine.Phase { return engine.PhaseRewrite }
+func (p *TransformerPlugin) Priority() int { return 50 }
+func (p *TransformerPlugin) Timeout() time.Duration { return 500 * time.Millisecond }
+func (p *TransformerPlugin) OnFailure() engine.FailureMode { return engine.FailureModeFailOpen }
 
 func (p *TransformerPlugin) Initialize(config map[string]interface{}) error {
-    p.mu.Lock()
-    defer p.mu.Unlock()
-    
     p.enabled = true
     p.addHeaders = make(map[string]string)
-    p.removeHeaders = make([]string, 0)
     
     if enabled, ok := config["enabled"].(bool); ok {
         p.enabled = enabled
     }
     
-    // Load headers to add
     if headers, ok := config["add_headers"].(map[string]interface{}); ok {
-        for key, value := range headers {
-            if valueStr, ok := value.(string); ok {
-                p.addHeaders[key] = valueStr
+        for k, v := range headers {
+            if val, ok := v.(string); ok {
+                p.addHeaders[k] = val
             }
         }
     }
     
-    // Load headers to remove
     if headers, ok := config["remove_headers"].([]interface{}); ok {
-        for _, header := range headers {
-            if headerStr, ok := header.(string); ok {
-                p.removeHeaders = append(p.removeHeaders, headerStr)
+        for _, v := range headers {
+            if val, ok := v.(string); ok {
+                p.removeHeaders = append(p.removeHeaders, val)
             }
         }
     }
@@ -271,525 +183,160 @@ func (p *TransformerPlugin) Initialize(config map[string]interface{}) error {
     return nil
 }
 
-func (p *TransformerPlugin) Middleware(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        if !p.enabled {
-            next.ServeHTTP(w, r)
-            return
-        }
-        
-        // Transform request
-        p.transformRequest(r)
-        
-        // Create response writer wrapper
-        wrapped := &responseWriterWrapper{
-            ResponseWriter: w,
-            body:          &bytes.Buffer{},
-        }
-        
-        next.ServeHTTP(wrapped, r)
-        
-        // Transform response
-        p.transformResponse(wrapped)
-    })
-}
+func (p *TransformerPlugin) Execute(ctx *engine.ExecutionContext) error {
+    if !p.enabled {
+        return nil
+    }
 
-func (p *TransformerPlugin) transformRequest(r *http.Request) {
-    p.mu.RLock()
-    defer p.mu.RUnlock()
-    
     // Add headers
-    for key, value := range p.addHeaders {
-        r.Header.Set(key, value)
+    for k, v := range p.addHeaders {
+        ctx.Request.Header.Set(k, v)
     }
     
     // Remove headers
-    for _, header := range p.removeHeaders {
-        r.Header.Del(header)
+    for _, k := range p.removeHeaders {
+        ctx.Request.Header.Del(k)
     }
-}
 
-func (p *TransformerPlugin) transformResponse(w *responseWriterWrapper) {
-    p.mu.RLock()
-    defer p.mu.RUnlock()
-    
-    // Add headers to response
-    for key, value := range p.addHeaders {
-        w.Header().Set(key, value)
-    }
-    
-    // Remove headers from response
-    for _, header := range p.removeHeaders {
-        w.Header().Del(header)
-    }
-    
-    // Write transformed body
-    w.ResponseWriter.WriteHeader(w.statusCode)
-    w.ResponseWriter.Write(w.body.Bytes())
-}
-
-type responseWriterWrapper struct {
-    http.ResponseWriter
-    statusCode int
-    body       *bytes.Buffer
-}
-
-func (rw *responseWriterWrapper) WriteHeader(code int) {
-    rw.statusCode = code
-}
-
-func (rw *responseWriterWrapper) Write(b []byte) (int, error) {
-    return rw.body.Write(b)
-}
-
-func (p *TransformerPlugin) Tags() map[string]string {
-    return map[string]string{
-        "type":       "transformer",
-        "category":   "transform",
-        "middleware": "true",
-    }
-}
-
-func (p *TransformerPlugin) Health() error {
-    if !p.enabled {
-        return fmt.Errorf("plugin is disabled")
-    }
     return nil
-}
-
-func (p *TransformerPlugin) Status() string {
-    p.mu.RLock()
-    defer p.mu.RUnlock()
-    
-    if !p.enabled {
-        return "Transformer: Disabled"
-    }
-    
-    return fmt.Sprintf("Transformer: Enabled (add: %d headers, remove: %d headers)", 
-        len(p.addHeaders), len(p.removeHeaders))
 }
 ```
 
-## Example 4: Circuit Breaker Plugin
+## Example 4: Circuit Breaker Plugin (Monitoring)
+
+This plugin monitors failures and can be used to fail requests if a threshold is reached.
 
 ```go
 package circuitbreaker
 
 import (
-    "context"
-    "encoding/json"
     "fmt"
-    "net/http"
     "sync"
     "time"
-)
 
-type CircuitState string
-
-const (
-    StateClosed   CircuitState = "closed"
-    StateOpen     CircuitState = "open"
-    StateHalfOpen CircuitState = "half-open"
+    "github.com/bhangun/iket/pkg/core/engine"
 )
 
 type CircuitBreakerPlugin struct {
-    enabled         bool
-    threshold       int
-    windowSize      time.Duration
-    timeout         time.Duration
-    state           CircuitState
-    failureCount    int
-    lastFailureTime time.Time
-    mu              sync.RWMutex
+    threshold    int
+    failures     int
+    state        string // "CLOSED", "OPEN"
+    lastFailure  time.Time
+    mu           sync.RWMutex
 }
 
-func (p *CircuitBreakerPlugin) Name() string {
-    return "circuit_breaker"
-}
-
-func (p *CircuitBreakerPlugin) Type() string {
-    return "resilience"
-}
+func (p *CircuitBreakerPlugin) Name() string { return "circuit_breaker" }
+func (p *CircuitBreakerPlugin) Phase() engine.Phase { return engine.PhaseTraffic }
+func (p *CircuitBreakerPlugin) Priority() int { return 10 }
+func (p *CircuitBreakerPlugin) Timeout() time.Duration { return 100 * time.Millisecond }
+func (p *CircuitBreakerPlugin) OnFailure() engine.FailureMode { return engine.FailureModeDeny }
 
 func (p *CircuitBreakerPlugin) Initialize(config map[string]interface{}) error {
-    p.mu.Lock()
-    defer p.mu.Unlock()
-    
-    p.enabled = true
     p.threshold = 5
-    p.windowSize = 60 * time.Second
-    p.timeout = 30 * time.Second
-    p.state = StateClosed
-    
-    if enabled, ok := config["enabled"].(bool); ok {
-        p.enabled = enabled
+    if t, ok := config["threshold"].(int); ok {
+        p.threshold = t
     }
-    
-    if threshold, ok := config["threshold"].(float64); ok {
-        p.threshold = int(threshold)
-    }
-    
-    if windowSize, ok := config["window_size"].(float64); ok {
-        p.windowSize = time.Duration(windowSize) * time.Second
-    }
-    
-    if timeout, ok := config["timeout"].(float64); ok {
-        p.timeout = time.Duration(timeout) * time.Second
-    }
-    
+    p.state = "CLOSED"
     return nil
 }
 
-func (p *CircuitBreakerPlugin) Middleware(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        if !p.enabled {
-            next.ServeHTTP(w, r)
-            return
-        }
-        
-        // Check circuit state
-        if !p.canExecute() {
-            p.writeError(w, "Circuit breaker is open", http.StatusServiceUnavailable)
-            return
-        }
-        
-        // Execute with timeout
-        success := p.executeWithTimeout(w, r, next)
-        
-        // Update circuit state
-        p.updateState(success)
-    })
-}
-
-func (p *CircuitBreakerPlugin) canExecute() bool {
+func (p *CircuitBreakerPlugin) Execute(ctx *engine.ExecutionContext) error {
     p.mu.RLock()
     defer p.mu.RUnlock()
-    
-    switch p.state {
-    case StateClosed:
-        return true
-    case StateHalfOpen:
-        return true
-    case StateOpen:
-        if time.Since(p.lastFailureTime) > p.windowSize {
-            p.mu.RUnlock()
-            p.mu.Lock()
-            p.state = StateHalfOpen
-            p.mu.Unlock()
-            p.mu.RLock()
-            return true
+
+    if p.state == "OPEN" {
+        // Check if we should try to close it (half-open logic omitted for brevity)
+        if time.Since(p.lastFailure) > 30*time.Second {
+            // Should transition to half-open
+            return nil 
         }
-        return false
-    default:
-        return false
+        return fmt.Errorf("circuit breaker is open")
     }
-}
 
-func (p *CircuitBreakerPlugin) executeWithTimeout(w http.ResponseWriter, r *http.Request, next http.Handler) bool {
-    ctx, cancel := context.WithTimeout(r.Context(), p.timeout)
-    defer cancel()
-    
-    done := make(chan bool, 1)
-    go func() {
-        next.ServeHTTP(w, r.WithContext(ctx))
-        done <- true
-    }()
-    
-    select {
-    case <-done:
-        return true
-    case <-ctx.Done():
-        return false
-    }
-}
-
-func (p *CircuitBreakerPlugin) updateState(success bool) {
-    p.mu.Lock()
-    defer p.mu.Unlock()
-    
-    if success {
-        p.onSuccess()
-    } else {
-        p.onFailure()
-    }
-}
-
-func (p *CircuitBreakerPlugin) onSuccess() {
-    switch p.state {
-    case StateClosed:
-        p.failureCount = 0
-    case StateHalfOpen:
-        p.state = StateClosed
-        p.failureCount = 0
-    }
-}
-
-func (p *CircuitBreakerPlugin) onFailure() {
-    p.failureCount++
-    p.lastFailureTime = time.Now()
-    
-    switch p.state {
-    case StateClosed:
-        if p.failureCount >= p.threshold {
-            p.state = StateOpen
-        }
-    case StateHalfOpen:
-        p.state = StateOpen
-    }
-}
-
-func (p *CircuitBreakerPlugin) writeError(w http.ResponseWriter, message string, statusCode int) {
-    w.Header().Set("Content-Type", "application/json")
-    w.WriteHeader(statusCode)
-    response := map[string]interface{}{
-        "error":   "Circuit Breaker Error",
-        "message": message,
-    }
-    json.NewEncoder(w).Encode(response)
-}
-
-func (p *CircuitBreakerPlugin) Tags() map[string]string {
-    return map[string]string{
-        "type":        "circuit_breaker",
-        "category":    "resilience",
-        "middleware":  "true",
-        "lifecycle":   "true",
-    }
-}
-
-func (p *CircuitBreakerPlugin) Health() error {
-    p.mu.RLock()
-    defer p.mu.RUnlock()
-    
-    if !p.enabled {
-        return fmt.Errorf("plugin is disabled")
-    }
-    
-    if p.state == StateOpen && time.Since(p.lastFailureTime) > p.windowSize*2 {
-        return fmt.Errorf("circuit breaker stuck in open state")
-    }
-    
     return nil
 }
 
-func (p *CircuitBreakerPlugin) Status() string {
-    p.mu.RLock()
-    defer p.mu.RUnlock()
-    
-    if !p.enabled {
-        return "CircuitBreaker: Disabled"
+// Custom logic to be called on upstream failures
+func (p *CircuitBreakerPlugin) RecordFailure() {
+    p.mu.Lock()
+    defer p.mu.Unlock()
+    p.failures++
+    p.lastFailure = time.Now()
+    if p.failures >= p.threshold {
+        p.state = "OPEN"
     }
-    
-    return fmt.Sprintf("CircuitBreaker: %s (failures: %d)", p.state, p.failureCount)
-}
-
-func (p *CircuitBreakerPlugin) OnStart() error {
-    p.mu.Lock()
-    defer p.mu.Unlock()
-    
-    p.state = StateClosed
-    p.failureCount = 0
-    return nil
-}
-
-func (p *CircuitBreakerPlugin) OnShutdown() error {
-    p.mu.Lock()
-    defer p.mu.Unlock()
-    
-    p.state = StateClosed
-    p.failureCount = 0
-    return nil
 }
 ```
 
 ## Configuration Examples
 
-### Request Counter Plugin
+### Plugin Configuration in `gateway.yaml`
+
 ```yaml
 plugins:
   request_counter:
     enabled: true
-```
-
-### API Key Plugin
-```yaml
-plugins:
   api_key:
     enabled: true
     keys:
-      "key1": "user1"
-      "key2": "user2"
-      "key3": "user3"
-```
-
-### Transformer Plugin
-```yaml
-plugins:
+      "secret-key-1": "admin"
+      "user-key-2": "basic-user"
   transformer:
     enabled: true
     add_headers:
-      "X-Custom-Header": "value"
-      "X-Plugin": "transformer"
+      "X-Iket-Transformed": "true"
     remove_headers:
-      - "X-Sensitive-Header"
-      - "X-Debug-Header"
+      - "X-Sensitive"
 ```
 
-### Circuit Breaker Plugin
-```yaml
-plugins:
-  circuit_breaker:
-    enabled: true
-    threshold: 5
-    window_size: 60
-    timeout: 30
-```
+## Building and Registering Plugins
 
-## Building and Loading
+Iket uses a factory pattern for plugin registration. Plugins are typically compiled as part of the gateway or registered in a central registry.
 
-### 1. Create a Go module for your plugin
-
-```bash
-mkdir my-plugin
-cd my-plugin
-go mod init my-plugin
-```
-
-### 2. Create your plugin file
+### 1. Define a Factory
 
 ```go
-// main.go
-package main
-
-import (
-    "iket/pkg/plugin"
-    "my-plugin/counter"
-)
-
-func main() {
-    // This is required for dynamic loading
-    // The gateway will look for this symbol
-    Plugin = &counter.RequestCounterPlugin{}
+func NewRequestCounterFactory(logger *logging.Logger) plugin.Factory {
+    return func() engine.PhasePlugin {
+        return NewRequestCounterPlugin(logger)
+    }
 }
-
-var Plugin plugin.Plugin
 ```
 
-### 3. Build as shared library
+### 2. Register with the Registry
 
-```bash
-go build -buildmode=plugin -o my-plugin.so cmd/iket/main.go
-```
+In your application's initialization (e.g., `pkg/core/plugin/plugin.go` or a dedicated plugin loader):
 
-### 4. Place in plugins directory
-
-```bash
-cp my-plugin.so /path/to/iket/plugins/
-```
-
-### 5. Configure in gateway
-
-```yaml
-server:
-  plugins_dir: "/path/to/iket/plugins"
-
-plugins:
-  request_counter:
-    enabled: true
+```go
+registry := plugin.NewRegistry(logger)
+registry.RegisterFactory("request_counter", NewRequestCounterFactory(logger))
 ```
 
 ## Testing Your Plugin
 
-### Unit Tests
+### Unit Testing `Execute`
 
 ```go
-package counter
+func TestRequestCounter_Execute(t *testing.T) {
+    logger := logging.NewNopLogger()
+    p := NewRequestCounterPlugin(logger)
+    p.Initialize(map[string]interface{}{"enabled": true})
 
-import (
-    "net/http"
-    "net/http/httptest"
-    "testing"
-)
-
-func TestRequestCounterPlugin_Initialize(t *testing.T) {
-    plugin := &RequestCounterPlugin{}
-    
-    config := map[string]interface{}{
-        "enabled": true,
+    req := httptest.NewRequest("GET", "/", nil)
+    ctx := &engine.ExecutionContext{
+        Request:   req,
+        RequestID: "test-req",
     }
-    
-    err := plugin.Initialize(config)
+
+    err := p.Execute(ctx)
     if err != nil {
-        t.Errorf("Initialize failed: %v", err)
+        t.Errorf("expected no error, got %v", err)
     }
-    
-    if !plugin.enabled {
-        t.Error("Plugin should be enabled")
-    }
-}
 
-func TestRequestCounterPlugin_Middleware(t *testing.T) {
-    plugin := &RequestCounterPlugin{}
-    plugin.Initialize(map[string]interface{}{"enabled": true})
-    
-    req := httptest.NewRequest("GET", "/test", nil)
-    w := httptest.NewRecorder()
-    
-    testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        w.WriteHeader(http.StatusOK)
-    })
-    
-    middleware := plugin.Middleware(testHandler)
-    middleware.ServeHTTP(w, req)
-    
-    if w.Code != http.StatusOK {
-        t.Errorf("Expected status 200, got %d", w.Code)
-    }
-    
-    if w.Header().Get("X-Request-Count") == "" {
-        t.Error("Expected X-Request-Count header")
+    if p.requestCount != 1 {
+        t.Errorf("expected count 1, got %d", p.requestCount)
     }
 }
 ```
 
-### Integration Tests
-
-```go
-func TestPluginIntegration(t *testing.T) {
-    // Create registry
-    registry := plugin.NewRegistry()
-    
-    // Register plugin
-    counterPlugin := &RequestCounterPlugin{}
-    err := registry.Register(counterPlugin)
-    if err != nil {
-        t.Fatal(err)
-    }
-    
-    // Initialize
-    config := map[string]map[string]interface{}{
-        "request_counter": {
-            "enabled": true,
-        },
-    }
-    
-    err = registry.Initialize(config)
-    if err != nil {
-        t.Fatal(err)
-    }
-    
-    // Test health
-    health := registry.HealthCheck()
-    if health["request_counter"] != nil {
-        t.Errorf("Plugin should be healthy: %v", health["request_counter"])
-    }
-    
-    // Test status
-    statuses := registry.PluginStatuses()
-    if statuses["request_counter"] == "" {
-        t.Error("Plugin should have status")
-    }
-}
-```
-
-These examples provide a solid foundation for creating custom plugins. Use them as templates and adapt them to your specific requirements. 
+These examples provide a solid foundation for creating custom plugins using Iket's phase-based architecture. 

@@ -34,10 +34,11 @@ func main() {
     // ... existing gateway setup ...
     
     // Create plugin registry
-    registry := plugin.NewRegistry()
+    registry := plugin.NewRegistry(logger)
     
-    // Register built-in plugins
-    // ... plugin registration code ...
+    // Register built-in plugins via factories
+    registry.RegisterFactory("rate_limiter", ratelimit.NewFactory())
+    registry.RegisterFactory("jwt_auth", jwt.NewFactory())
     
     // Create management API
     managementAPI := api.NewManagementAPI(gateway, logger, registry)

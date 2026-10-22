@@ -19,280 +19,129 @@ This guide explains how to create custom plugins for the Iket API Gateway. Plugi
 
 ## Plugin Architecture
 
-Iket uses a plugin system that supports multiple interfaces:
+Iket uses a **Phase-Based Execution Engine**. Instead of simple middleware chaining, plugins are assigned to specific **phases** of the request lifecycle. This ensures a deterministic and high-performance execution flow.
 
-- **Basic Plugin**: Core functionality (name, initialization)
-- **Middleware Plugin**: HTTP middleware capabilities
-- **Typed Plugin**: Categorization by type
-- **Tagged Plugin**: Metadata and discovery
-- **Lifecycle Plugin**: Startup/shutdown hooks
-- **Health Checker**: Health monitoring
-- **Status Reporter**: Status reporting
-- **Reloadable Plugin**: Hot-reload support
+### Execution Phases
+
+| Phase | Description | Examples |
+|-------|-------------|----------|
+| `PhaseRewrite` | URL/Path manipulations | CORS, Path Stripping |
+| `PhaseAuth` | Authentication | JWT, mTLS, OAuth2 |
+| `PhasePolicy` | Authorization | OPA, IP Whitelist |
+| `PhaseTraffic` | Traffic management | Rate Limit, Circuit Breaker |
+| `PhaseUpstream` | Backend communication | Upstream Proxy |
+| `PhaseResponse` | Response transformation | Header Injection |
+| `PhaseLog` | Observability | Prometheus, Logging |
 
 ## Plugin Interfaces
 
-### Core Interfaces
+### The PhasePlugin Interface
+
+All plugins must implement the `engine.PhasePlugin` interface located in [pkg/core/engine/phase.go](file://~/Workspace/workkayys/Products/Wayang/wayang-platform/wayang-gateway/iket/pkg/core/engine/phase.go):
 
 ```go
-// Basic plugin interface
-type Plugin interface {
+type PhasePlugin interface {
+    // Name returns the unique identifier for the plugin
     Name() string
+
+    // Phase returns which execution phase this plugin belongs to
+    Phase() Phase
+
+    // Priority determines execution order within a phase (higher = earlier)
+    Priority() int
+
+    // Execute runs the plugin logic using the ExecutionContext
+    Execute(ctx *ExecutionContext) error
+
+    // OnFailure defines behavior when execution fails (FailOpen or Deny)
+    OnFailure() FailureMode
+
+    // Initialize configures the plugin with raw configuration
     Initialize(config map[string]interface{}) error
-}
 
-// Middleware plugin interface
-type MiddlewarePlugin interface {
-    Plugin
-    Middleware(next http.Handler) http.Handler
-}
-
-// Typed plugin interface
-type TypedPlugin interface {
-    Plugin
-    Type() PluginType
-}
-
-// Tagged plugin interface
-type TaggedPlugin interface {
-    Plugin
-    Tags() map[string]string
-}
-
-// Lifecycle plugin interface
-type LifecyclePlugin interface {
-    Plugin
-    OnStart() error
-    OnShutdown() error
-}
-
-// Health checker interface
-type HealthChecker interface {
-    Health() error
-}
-
-// Status reporter interface
-type StatusReporter interface {
-    Status() string
-}
-
-// Reloadable plugin interface
-type ReloadablePlugin interface {
-    Plugin
-    Reload(config map[string]interface{}) error
+    // Timeout returns the max execution time for this plugin
+    Timeout() time.Duration
 }
 ```
 
-### Plugin Types
+## Creating a Plugin
 
-```go
-type PluginType string
-
-const (
-    AuthPlugin      PluginType = "auth"
-    RateLimitPlugin PluginType = "ratelimit"
-    TransformPlugin PluginType = "transform"
-    Observability   PluginType = "observability"
-)
-```
-
-## Creating a Basic Plugin
-
-Here's a minimal plugin example:
+Here's a minimal plugin implementation:
 
 ```go
 package myplugin
 
 import (
-    "net/http"
-    "sync"
+    "time"
+    "github.com/bhangun/iket/pkg/core/engine"
+    "github.com/bhangun/iket/pkg/logging"
 )
 
 type MyPlugin struct {
-    enabled bool
-    mu      sync.RWMutex
+    logger *logging.Logger
 }
 
-func (p *MyPlugin) Name() string {
-    return "my_plugin"
+func NewMyPlugin(logger *logging.Logger) *MyPlugin {
+    return &MyPlugin{logger: logger}
 }
+
+func (p *MyPlugin) Name() string { return "my_plugin" }
+func (p *MyPlugin) Phase() engine.Phase { return engine.PhaseTraffic }
+func (p *MyPlugin) Priority() int { return 100 }
+func (p *MyPlugin) Timeout() time.Duration { return 2 * time.Second }
+func (p *MyPlugin) OnFailure() engine.FailureMode { return engine.FailureModeDeny }
 
 func (p *MyPlugin) Initialize(config map[string]interface{}) error {
-    p.mu.Lock()
-    defer p.mu.Unlock()
-    
-    // Set default values
-    p.enabled = true
-    
-    // Load configuration
-    if enabled, ok := config["enabled"].(bool); ok {
-        p.enabled = enabled
-    }
-    
+    // Parse configuration
+    return nil
+}
+
+func (p *MyPlugin) Execute(ctx *engine.ExecutionContext) error {
+    p.logger.Info("Executing my plugin", logging.String("request_id", ctx.RequestID))
     return nil
 }
 ```
 
 ## Plugin Lifecycle
 
-### Initialization
-- `Initialize()` is called when the plugin is first loaded
-- Configuration is passed as a map[string]interface{}
-- Set up resources, validate configuration
-
-### Startup
-- `OnStart()` is called when the gateway starts
-- Initialize connections, start background processes
-- Return error if startup fails
-
-### Runtime
-- `Middleware()` is called for each HTTP request
-- Process requests, modify responses
-- Handle errors gracefully
-
-### Shutdown
-- `OnShutdown()` is called when the gateway stops
-- Clean up resources, close connections
-- Return error if shutdown fails
+1. **Registration**: The plugin factory is registered in the central registry.
+2. **Compilation**: When a new configuration is loaded, the compiler creates instances of the plugins via their factories.
+3. **Initialization**: `Initialize()` is called with the specific configuration for that route/global instance.
+4. **Execution**: `Execute()` is called for every matching request during the assigned phase.
 
 ## Configuration
 
-Plugins receive configuration through the `Initialize()` method:
+Plugins receive configuration as `map[string]interface{}`. Use type assertions or a mapping library to decode it:
 
 ```go
 func (p *MyPlugin) Initialize(config map[string]interface{}) error {
-    // Access configuration values
-    if enabled, ok := config["enabled"].(bool); ok {
-        p.enabled = enabled
+    if limit, ok := config["limit"].(float64); ok {
+        p.limit = int(limit)
     }
-    
-    if timeout, ok := config["timeout"].(float64); ok {
-        p.timeout = time.Duration(timeout) * time.Second
-    }
-    
-    if paths, ok := config["skip_paths"].([]interface{}); ok {
-        for _, path := range paths {
-            if pathStr, ok := path.(string); ok {
-                p.skipPaths = append(p.skipPaths, pathStr)
-            }
-        }
-    }
-    
     return nil
-}
-```
-
-## Middleware Implementation
-
-Here's how to implement HTTP middleware:
-
-```go
-func (p *MyPlugin) Middleware(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        // Pre-processing
-        if !p.enabled {
-            next.ServeHTTP(w, r)
-            return
-        }
-        
-        // Skip processing for certain paths
-        if p.shouldSkip(r.URL.Path) {
-            next.ServeHTTP(w, r)
-            return
-        }
-        
-        // Process request
-        if err := p.processRequest(r); err != nil {
-            p.writeError(w, err.Error(), http.StatusBadRequest)
-            return
-        }
-        
-        // Call next handler
-        next.ServeHTTP(w, r)
-        
-        // Post-processing
-        p.processResponse(w, r)
-    })
-}
-```
-
-## Health Checking
-
-Implement health checking for your plugin:
-
-```go
-func (p *MyPlugin) Health() error {
-    p.mu.RLock()
-    defer p.mu.RUnlock()
-    
-    if !p.enabled {
-        return fmt.Errorf("plugin is disabled")
-    }
-    
-    // Check if plugin is healthy
-    if err := p.checkHealth(); err != nil {
-        return fmt.Errorf("health check failed: %w", err)
-    }
-    
-    return nil
-}
-
-func (p *MyPlugin) checkHealth() error {
-    // Implement your health check logic
-    // e.g., check database connections, external services, etc.
-    return nil
-}
-```
-
-## Status Reporting
-
-Provide human-readable status information:
-
-```go
-func (p *MyPlugin) Status() string {
-    p.mu.RLock()
-    defer p.mu.RUnlock()
-    
-    if !p.enabled {
-        return "MyPlugin: Disabled"
-    }
-    
-    return fmt.Sprintf("MyPlugin: Enabled (processed: %d requests)", p.requestCount)
 }
 ```
 
 ## Plugin Registration
 
-### Method 1: Direct Registration
+Plugins must be registered in the central registry located in [pkg/core/plugin/plugin.go](file://~/Workspace/workkayys/Products/Wayang/wayang-platform/wayang-gateway/iket/pkg/core/plugin/plugin.go).
+
+### Registering a Factory
 
 ```go
-package main
-
-import (
-    "iket/pkg/plugin"
-    "myproject/myplugin"
-)
-
-func main() {
-    registry := plugin.NewRegistry()
-    
-    // Register your plugin
-    myPlugin := &myplugin.MyPlugin{}
-    if err := registry.Register(myPlugin); err != nil {
-        log.Fatal(err)
+// In pkg/core/plugin/plugin.go
+func (r *Registry) RegisterAllBuiltins() error {
+    // ...
+    if err := r.RegisterFactory("my_plugin", func(logger *logging.Logger, config map[string]interface{}) (engine.PhasePlugin, error) {
+        p := NewMyPlugin(logger)
+        if err := p.Initialize(config); err != nil {
+            return nil, err
+        }
+        return p, nil
+    }); err != nil {
+        return err
     }
-    
-    // Initialize with configuration
-    config := map[string]map[string]interface{}{
-        "my_plugin": {
-            "enabled": true,
-            "timeout": 30.0,
-        },
-    }
-    
-    if err := registry.Initialize(config); err != nil {
-        log.Fatal(err)
-    }
+    // ...
 }
 ```
 

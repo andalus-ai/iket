@@ -1,23 +1,26 @@
-permissions:
-  contents: write
-
 name: Release
 
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - 'v*'
+
+permissions:
+  contents: write
+  packages: write
 
 jobs:
-  build:
+  release-binaries:
     name: Build and Release Binaries
     runs-on: ubuntu-latest
 
     strategy:
       matrix:
         goos: [linux, windows, darwin]
-        goarch: [amd64]
-      fail-fast: false
+        goarch: [amd64, arm64]
+        exclude:
+          - goos: windows
+            goarch: arm64
 
     steps:
       - name: Checkout code
@@ -30,16 +33,20 @@ jobs:
 
       - name: Set version from tag
         id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+        run: |
+          echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+          echo "VERSION_NUMBER=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
 
       - name: Build binary
         run: |
           mkdir -p dist
           EXT=""
           if [ "${{ matrix.goos }}" = "windows" ]; then EXT=".exe"; fi
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-          go build -ldflags "-X 'github.com/bhangun/iket/pkg/app.Version=${VERSION}'" \
-            -o dist/iket-${{ matrix.goos }}-${{ matrix.goarch }}$EXT ./cmd/iket/main.go
+          
+          # Set GOOS and GOARCH for cross-compilation
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 \
+          go build -ldflags "-X 'github.com/bhangun/iket/pkg/app.Version=${VERSION}' -w -s" \
+            -o dist/iket-${{ matrix.goos }}-${{ matrix.goarch }}${EXT} ./cmd/iket/main.go
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -47,9 +54,9 @@ jobs:
           name: iket-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/iket-${{ matrix.goos }}-${{ matrix.goarch }}*
 
-  release:
+  create-release:
     name: Create GitHub Release
-    needs: build
+    needs: release-binaries
     runs-on: ubuntu-latest
     steps:
       - name: Download all build artifacts
@@ -57,12 +64,354 @@ jobs:
         with:
           path: dist
 
-      - name: Display files
-        run: ls -R dist
+      - name: Prepare release assets
+        run: |
+          mkdir -p release_assets
+          find dist -name "*" -type f -exec mv {} release_assets/ \;
+          chmod +x release_assets/*
+
+      - name: Calculate checksums
+        run: |
+          cd release_assets
+          sha256sum * > ../SHA256SUMS
+          cd ..
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/**/*
+          files: |
+            release_assets/*
+            SHA256SUMS
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+
+  homebrew-tap:
+    name: Update Homebrew Tap
+    needs: create-release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Get version
+        id: get_version
+        run: |
+          echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+          echo "VERSION_NUMBER=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
+
+      - name: Get release info
+        id: release_info
+        run: |
+          RELEASE_JSON=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/tags/${VERSION})
+          echo "RELEASE_JSON<<EOF" >> $GITHUB_ENV
+          echo "$RELEASE_JSON" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Update Homebrew formula
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
+          HOMEBREW_TAP_REPO: ${{ secrets.HOMEBREW_TAP_REPO }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -z "$HOMEBREW_TAP_REPO" ]; then
+            echo "HOMEBREW_TAP_REPO not set, skipping Homebrew update"
+            exit 0
+          fi
+          
+          # Clone the homebrew tap repository
+          git clone "https://github.com/$HOMEBREW_TAP_REPO.git" homebrew-tap
+          cd homebrew-tap
+          
+          # Create Formula directory if it doesn't exist
+          mkdir -p Formula
+          
+          # Get the tarball URL and SHA256 for the source
+          TAR_URL="https://github.com/${{ github.repository }}/archive/${VERSION}.tar.gz"
+          TAR_SHA=$(curl -sL "$TAR_URL" | shasum -a 256 | cut -d' ' -f1)
+          
+          # Create or update the formula
+          cat > Formula/iket.rb << EOF
+    class Iket < Formula
+      desc "Lightweight, extensible, pluggable API Gateway written in Go"
+      homepage "https://github.com/bhangun/iket"
+      url "$TAR_URL"
+      sha256 "$TAR_SHA"
+      license "MIT"
+
+      depends_on "go" => :build
+
+      def install
+        ldflags = "-s -w -X github.com/bhangun/iket/pkg/app.Version=#{version}"
+        system "go", "build", *std_go_args(ldflags: ldflags), "./cmd/iket/main.go"
+      end
+
+      test do
+        system "#{bin}/iket", "--help"
+      end
+    end
+    EOF
+          
+          # Commit and push changes
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add Formula/iket.rb
+          git commit -m "Update iket to ${VERSION}" || echo "No changes to commit"
+          git push origin main
+
+  chocolatey:
+    name: Update Chocolatey Package
+    needs: create-release
+    runs-on: windows-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Get version
+        id: get_version
+        run: |
+          $version = $env:GITHUB_REF -replace 'refs/tags/v', ''
+          echo "VERSION=$version" >> $env:GITHUB_ENV
+        shell: pwsh
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.8'
+
+      - name: Setup NuGet
+        uses: nuget/setup-nuget@v1
+        with:
+          nuget-version: 'latest'
+
+      - name: Install Chocolatey
+        run: |
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+          iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+        shell: powershell
+
+      - name: Create Chocolatey package
+        run: |
+          # Create tools directory
+          New-Item -ItemType Directory -Path "tools" -Force
+          
+          # Download the Windows binary
+          $downloadUrl = "https://github.com/bhangun/iket/releases/download/v$env:VERSION/iket-windows-amd64.exe"
+          Invoke-WebRequest -Uri $downloadUrl -OutFile "tools\iket.exe"
+          
+          # Calculate checksum
+          $checksum = (Get-FileHash -Path "tools\iket.exe" -Algorithm SHA256).Hash
+          
+          # Create chocolateyinstall.ps1
+          @"
+    \$ErrorActionPreference = 'Stop'
+    
+    \$packageName = 'iket'
+    \$toolsDir   = "\$(Split-Path -parent \$MyInvocation.MyCommand.Definition)"
+    \$fileLocation = Join-Path \$toolsDir 'iket.exe'
+    
+    Install-BinFile -Name 'iket' -Path \$fileLocation
+    "@ | Out-File -FilePath "tools\chocolateyinstall.ps1" -Encoding UTF8
+    
+          # Create chocolateyuninstall.ps1
+          @"
+    \$ErrorActionPreference = 'Stop'
+    
+    \$packageName = 'iket'
+    
+    Uninstall-BinFile -Name 'iket'
+    "@ | Out-File -FilePath "tools\chocolateyuninstall.ps1" -Encoding UTF8
+    
+          # Create iket.nuspec
+          @"
+    <?xml version="1.0" encoding="utf-8"?>
+    <package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+      <metadata>
+        <id>iket</id>
+        <version>$($env:VERSION)</version>
+        <title>Iket API Gateway</title>
+        <authors>bhangun</authors>
+        <description>Iket is a lightweight, extensible, pluggable API Gateway written in Go. It supports modern gateway features such as rate-limiting, JWT authentication, WebSockets, middleware chaining, hot-reloadable plugins, and more.</description>
+        <summary>Iket API Gateway - Lightweight, extensible, pluggable API Gateway</summary>
+        <projectUrl>https://github.com/bhangun/iket</projectUrl>
+        <tags>api gateway proxy golang cli</tags>
+        <copyright>Copyright (c) 2025 bhangun</copyright>
+        <requireLicenseAcceptance>false</requireLicenseAcceptance>
+        <licenseUrl>https://github.com/bhangun/iket/blob/main/LICENSE</licenseUrl>
+        <projectSourceUrl>https://github.com/bhangun/iket</projectSourceUrl>
+        <packageSourceUrl>https://github.com/bhangun/iket</packageSourceUrl>
+        <docsUrl>https://github.com/bhangun/iket/blob/main/README.md</docsUrl>
+        <bugTrackerUrl>https://github.com/bhangun/iket/issues</bugTrackerUrl>
+      </metadata>
+      <files>
+        <file src="tools\**" target="tools" />
+      </files>
+    </package>
+    "@ | Out-File -FilePath "iket.nuspec" -Encoding UTF8
+        shell: powershell
+
+      - name: Pack Chocolatey package
+        run: |
+          choco pack iket.nuspec
+        shell: cmd
+
+      - name: Push to Chocolatey
+        env:
+          CHOCOLATEY_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
+        if: env.CHOCOLATEY_API_KEY != null
+        run: |
+          if ($env:CHOCOLATEY_API_KEY) {
+            Get-ChildItem *.nupkg | ForEach-Object {
+              Write-Host "Pushing package: $($_.Name)"
+              choco push $_.Name --api-key="$env:CHOCOLATEY_API_KEY" --source="https://push.chocolatey.org/"
+            }
+          } else {
+            Write-Host "Chocolatey API key not set, skipping push"
+          }
+        shell: powershell
+
+  curl-install-script:
+    name: Create and upload curl installation script
+    needs: create-release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Get version
+        id: get_version
+        run: |
+          echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+          echo "VERSION_NUMBER=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
+
+      - name: Create install script
+        run: |
+          cat > install.sh << 'EOF'
+    #!/bin/bash
+
+    set -e
+
+    # Default values
+    INSTALL_DIR="/usr/local/bin"
+    BINARY_NAME="iket"
+    REPO="bhangun/iket"
+    VERSION=""
+    ARCH=$(uname -m)
+    OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+
+    # Convert architecture names to match GitHub releases
+    case $ARCH in
+      x86_64|amd64)
+        ARCH="amd64"
+        ;;
+      aarch64|arm64)
+        ARCH="arm64"
+        ;;
+      *)
+        echo "Unsupported architecture: $ARCH"
+        exit 1
+        ;;
+    esac
+
+    # Convert OS names
+    case $OS in
+      darwin|linux)
+        # Valid OS names
+        ;;
+      *)
+        echo "Unsupported OS: $OS"
+        exit 1
+        ;;
+    esac
+
+    # Parse command line arguments
+    while [[ $# -gt 0 ]]; do
+      case $1 in
+        -d|--dir)
+          INSTALL_DIR="$2"
+          shift 2
+          ;;
+        -v|--version)
+          VERSION="$2"
+          shift 2
+          ;;
+        -h|--help)
+          echo "Install script for iket"
+          echo ""
+          echo "Usage: $0 [options]"
+          echo "Options:"
+          echo "  -d, --dir DIR     Installation directory (default: /usr/local/bin)"
+          echo "  -v, --version VER Version to install (default: latest)"
+          echo "  -h, --help        Show this help message"
+          exit 0
+          ;;
+        *)
+          echo "Unknown option: $1"
+          exit 1
+          ;;
+      esac
+    done
+
+    # Get latest version if not specified
+    if [ -z "$VERSION" ]; then
+      echo "Fetching latest version..."
+      VERSION=$(curl -s https://api.github.com/repos/$REPO/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+      if [ -z "$VERSION" ]; then
+        echo "Could not determine latest version"
+        exit 1
+      fi
+    fi
+
+    # Remove 'v' prefix if present
+    VERSION_CLEAN=${VERSION#v}
+
+    echo "Installing iket version $VERSION for $OS/$ARCH to $INSTALL_DIR"
+
+    # Construct download URL
+    DOWNLOAD_URL="https://github.com/$REPO/releases/download/$VERSION/${BINARY_NAME}-${OS}-${ARCH}"
+
+    # Create temporary directory
+    TMP_DIR=$(mktemp -d)
+    cd "$TMP_DIR"
+
+    # Download binary
+    echo "Downloading from: $DOWNLOAD_URL"
+    if ! curl -L -o "$BINARY_NAME" "$DOWNLOAD_URL"; then
+      echo "Failed to download binary"
+      exit 1
+    fi
+
+    # Make binary executable
+    chmod +x "$BINARY_NAME"
+
+    # Create installation directory if it doesn't exist
+    sudo mkdir -p "$INSTALL_DIR"
+
+    # Move binary to installation directory
+    if ! sudo mv "$BINARY_NAME" "$INSTALL_DIR/"; then
+      echo "Failed to move binary to $INSTALL_DIR (requires sudo)"
+      exit 1
+    fi
+
+    # Verify installation
+    if command -v "$BINARY_NAME" &> /dev/null; then
+      echo "Successfully installed $(command -v "$BINARY_NAME")"
+      echo "Version: $($BINARY_NAME --version 2>/dev/null || echo 'unknown')"
+    else
+      echo "Installation failed: $BINARY_NAME not found in PATH"
+      exit 1
+    fi
+
+    # Cleanup
+    rm -rf "$TMP_DIR"
+
+    echo "Installation complete!"
+    echo "Run 'iket --help' to get started."
+    EOF
+
+          chmod +x install.sh
+
+      - name: Upload install script to release
+        run: |
+          # This step would typically upload the script to the release,
+          # but GitHub Actions doesn't easily allow appending to existing releases
+          # So we'll just make sure the script is available in the repo
+          mkdir -p scripts
+          cp install.sh scripts/install.sh

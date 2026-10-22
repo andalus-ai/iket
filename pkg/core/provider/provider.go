@@ -37,6 +37,19 @@ type ConfigSnapshot struct {
 	Metadata map[string]interface{}
 }
 
+// Validate performs basic validation on the snapshot
+func (s *ConfigSnapshot) Validate() error {
+	if s.Version == "" {
+		return fmt.Errorf("snapshot version is required")
+	}
+
+	if len(s.Services) == 0 {
+		return fmt.Errorf("at least one service is required")
+	}
+
+	return nil
+}
+
 // Provider defines the interface for configuration sources
 type Provider interface {
 	// Name returns the provider name

@@ -12,8 +12,8 @@ import (
 	"github.com/bhangun/iket/pkg/config"
 	"github.com/bhangun/iket/pkg/logging"
 
-	"github.com/bhangun/iket/pkg/core/plugin"
-	"github.com/bhangun/iket/pkg/core/runtime/gateway"
+	"github.com/bhangun/iket/pkg/core/runtime"
+	"github.com/bhangun/iket/pkg/plugin"
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
@@ -21,7 +21,7 @@ import (
 
 // ManagementAPI provides REST endpoints for gateway management
 type ManagementAPI struct {
-	gateway  *gateway.Gateway
+	gateway  *runtime.Gateway
 	logger   *logging.Logger
 	registry *plugin.Registry
 	mu       sync.RWMutex
@@ -37,7 +37,7 @@ type ManagementAPI struct {
 }
 
 // NewManagementAPI creates a new management API instance
-func NewManagementAPI(gateway *gateway.Gateway, logger *logging.Logger, registry *plugin.Registry) *ManagementAPI {
+func NewManagementAPI(gateway *runtime.Gateway, logger *logging.Logger, registry *plugin.Registry) *ManagementAPI {
 	api := &ManagementAPI{
 		gateway:  gateway,
 		logger:   logger,
@@ -209,7 +209,7 @@ type RouteInfo struct {
 
 // Handler implementations
 func (api *ManagementAPI) getGatewayStatus(w http.ResponseWriter, r *http.Request) {
-	clientIP := gateway.GetClientIP(r)
+	clientIP := runtime.GetClientIP(r)
 	api.logger.Info("gateway/status requested",
 		logging.String("client_ip", clientIP),
 		logging.String("path", r.URL.Path),
