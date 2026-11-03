@@ -496,6 +496,7 @@ func main() {
 
 	// Create and register management API
 	managementAPI := api.NewManagementAPI(gw, logger, plugin.DefaultRegistry)
+	managementAPI.SetSecurityConfig(cfg.Security)
 	managementAPI.RegisterRoutes(gw.GetRouter())
 	enrollmentServer := startEnrollmentServer(cfg, logger, managementAPI)
 
