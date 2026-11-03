@@ -24,6 +24,7 @@ type ManagementAPI struct {
 	gateway  *runtime.Gateway
 	logger   *logging.Logger
 	registry *plugin.Registry
+	security *config.SecurityConfig
 	mu       sync.RWMutex
 
 	// WebSocket upgrader
