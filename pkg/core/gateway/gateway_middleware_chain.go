@@ -26,6 +26,9 @@ func (g *Gateway) setupMiddleware() error {
 			Algorithms:    g.config.Security.Jwt.Algorithms,
 			PublicKeyFile: g.config.Security.Jwt.PublicKeyFile,
 			Required:      g.config.Security.Jwt.Required,
+			NumouAccessTokens: g.config.Security.Jwt.NumouAccessTokens,
+			Issuer:        g.config.Security.Jwt.Issuer,
+			Audience:      g.config.Security.Jwt.Audience,
 		}
 		g.router.Use(g.jwtAuthMiddleware(jwtCfg))
 	}
