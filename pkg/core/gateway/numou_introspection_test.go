@@ -162,3 +162,53 @@ func TestAcquireWorkloadTokenRejectsMissingRoleScope(t *testing.T) {
 		t.Fatal("expected token without oauth-introspect scope to be rejected")
 	}
 }
+
+func TestNumouWorkloadTokenExchangeThenIntrospectionUsesDistinctTokens(t *testing.T) {
+	var tokenCalls, introspectionCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/oauth2/token":
+			tokenCalls.Add(1)
+			user, pass, ok := r.BasicAuth()
+			if !ok || user != "iket-workload" || pass != "mounted-secret" {
+				t.Errorf("invalid workload client authentication")
+			}
+			if err := r.ParseForm(); err != nil { t.Errorf("parse token form: %v", err) }
+			if r.Form.Get("grant_type") != "client_credentials" || r.Form.Get("scope") != "oauth-introspect" {
+				t.Errorf("unexpected token request: %v", r.Form)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"access_token":"workload-bearer","token_type":"Bearer","expires_in":300,"scope":"oauth-introspect"}`))
+		case "/internal/v1/oauth2/introspect":
+			introspectionCalls.Add(1)
+			if got := r.Header.Get("Authorization"); got != "Bearer workload-bearer" {
+				t.Errorf("unexpected introspection authorization: %q", got)
+			}
+			if err := r.ParseForm(); err != nil { t.Errorf("parse introspection form: %v", err) }
+			if r.Form.Get("token") != "application-access-token" {
+				t.Errorf("submitted token was not the application access token")
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"active":true,"token_type":"Bearer","client_id":"nmc_client_test","tenant_id":"8d5d8a7e-6d6b-4f0a-9d1f-7cfa8f35c2b1","application_id":"b2b1b84d-23d8-4a9b-8b42-4f2e7f2d6c11","scope":"orders.read orders.write"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	secretFile := t.TempDir() + "/client-secret"
+	if err := os.WriteFile(secretFile, []byte("mounted-secret"), 0600); err != nil { t.Fatal(err) }
+	i := &numouIntrospector{
+		client: server.Client(), endpoint: server.URL + "/internal/v1/oauth2/introspect",
+		tokenEndpoint: server.URL + "/api/v1/oauth2/token", clientID: "iket-workload",
+		clientSecretFile: secretFile, workloadScope: "oauth-introspect",
+		positiveTTL: 5*time.Second, negativeTTL: time.Second, maxEntries: 8,
+		cache: make(map[string]introspectionCacheEntry), flights: make(map[string]*introspectionFlight), now: time.Now,
+	}
+	i.getWorkloadToken = i.acquireWorkloadToken
+	active, err := i.request(context.Background(), "application-access-token", validIntrospectionClaims())
+	if err != nil { t.Fatal(err) }
+	if !active { t.Fatal("expected active application token") }
+	if tokenCalls.Load() != 1 || introspectionCalls.Load() != 1 {
+		t.Fatalf("expected one workload token exchange and one introspection; got %d and %d", tokenCalls.Load(), introspectionCalls.Load())
+	}
+}
