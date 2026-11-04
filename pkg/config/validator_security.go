@@ -28,7 +28,7 @@ func (r *SecurityConfigRule) Validate(cfg *Config) error {
 		for field, raw := range map[string]string{"timeout": ic.Timeout, "positiveCacheTTL": ic.PositiveCacheTTL, "negativeCacheTTL": ic.NegativeCacheTTL} {
 			if strings.TrimSpace(raw) == "" { return errors.NewValidationError("security.jwt.introspection."+field, "duration is required") }
 			d, parseErr := time.ParseDuration(raw)
-			if parseErr != nil || d <= 0 { return errors.NewValidationError("security.jwt.introspection."+field, "duration must be positive and valid") }
+			if parseErr != nil || d <= 0 || (field == "timeout" && d > 10*time.Second) { return errors.NewValidationError("security.jwt.introspection."+field, "duration must be positive; timeout must not exceed 10s") }
 		}
 		positive, _ := time.ParseDuration(ic.PositiveCacheTTL)
 		negative, _ := time.ParseDuration(ic.NegativeCacheTTL)
