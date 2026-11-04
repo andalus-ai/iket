@@ -216,3 +216,80 @@ func (i *numouIntrospector) evictExpiredAndOverflowLocked() {
 		delete(i.cache, oldestKey)
 	}
 }
+
+type workloadTokenResponse struct {
+	AccessToken string `json:"access_token"`
+	TokenType   string `json:"token_type"`
+	ExpiresIn   int64  `json:"expires_in"`
+	Scope       string `json:"scope"`
+}
+
+// acquireWorkloadToken obtains a short-lived, dedicated service token. The
+// client secret is read from its mounted secret file only when refreshing;
+// neither the secret nor the returned bearer token is logged or persisted.
+func (i *numouIntrospector) acquireWorkloadToken(ctx context.Context) (string, error) {
+	i.tokenMu.Lock()
+	defer i.tokenMu.Unlock()
+	now := i.now()
+	if i.workloadToken != "" && now.Add(10*time.Second).Before(i.workloadTokenExp) {
+		return i.workloadToken, nil
+	}
+	secretBytes, err := os.ReadFile(i.clientSecretFile)
+	if err != nil {
+		return "", errors.New("unable to read Numou introspection workload secret")
+	}
+	secret := strings.TrimSpace(string(secretBytes))
+	if secret == "" || len(secret) > 4096 {
+		return "", errors.New("Numou introspection workload secret is empty or too large")
+	}
+	form := url.Values{"grant_type": []string{"client_credentials"}, "scope": []string{i.workloadScope}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, i.tokenEndpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", err
+	}
+	req.SetBasicAuth(i.clientID, secret)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	resp, err := i.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", errors.New("Numou workload token endpoint returned non-success status")
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxIntrospectionResponseBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if len(body) > maxIntrospectionResponseBytes {
+		return "", errors.New("Numou workload token response too large")
+	}
+	var result workloadTokenResponse
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&result); err != nil {
+		return "", err
+	}
+	var trailing interface{}
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return "", errors.New("Numou workload token response contains trailing JSON")
+	}
+	if result.AccessToken == "" || len(result.AccessToken) > maxIntrospectionResponseBytes ||
+		result.TokenType != "Bearer" || result.ExpiresIn < 30 || result.ExpiresIn > 900 {
+		return "", errors.New("Numou workload token response is invalid")
+	}
+	granted := false
+	for _, scope := range strings.Fields(result.Scope) {
+		if scope == i.workloadScope {
+			granted = true
+			break
+		}
+	}
+	if !granted {
+		return "", errors.New("Numou workload token lacks the required introspection scope")
+	}
+	i.workloadToken = result.AccessToken
+	i.workloadTokenExp = now.Add(time.Duration(result.ExpiresIn) * time.Second)
+	return i.workloadToken, nil
+}
