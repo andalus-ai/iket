@@ -13,6 +13,8 @@ func TestSecurityConfigRuleRequiresSecureBoundedNumouIntrospection(t *testing.T)
 				Algorithms: []string{"RS256"}, Issuer: "https://identity.example", Audience: "iket",
 				Introspection: NumouIntrospectionConfig{
 					Enabled: true, URL: "https://identity.example/internal/v1/oauth2/introspect",
+					TokenURL: "https://identity.example/api/v1/oauth2/token", ClientID: "nmc_iket_introspection",
+					ClientSecretFile: "/run/secrets/numou-introspection-client-secret", WorkloadScope: "oauth-introspect",
 					CAFile: "/tls/ca.pem", ClientCertFile: "/tls/iket.crt", ClientKeyFile: "/tls/iket.key",
 					Timeout: "2s", PositiveCacheTTL: "5s", NegativeCacheTTL: "1s", CacheMaxEntries: 1000,
 				},
@@ -25,6 +27,10 @@ func TestSecurityConfigRuleRequiresSecureBoundedNumouIntrospection(t *testing.T)
 	tests := []struct{name string; mutate func(*Config)}{
 		{"requires Numou profile", func(c *Config) { c.Security.Jwt.NumouAccessTokens = false }},
 		{"requires HTTPS", func(c *Config) { c.Security.Jwt.Introspection.URL = "http://identity.example/introspect" }},
+		{"requires HTTPS token endpoint", func(c *Config) { c.Security.Jwt.Introspection.TokenURL = "http://identity.example/token" }},
+		{"requires same Identity host", func(c *Config) { c.Security.Jwt.Introspection.TokenURL = "https://attacker.example/token" }},
+		{"requires workload client secret", func(c *Config) { c.Security.Jwt.Introspection.ClientSecretFile = "" }},
+		{"requires introspection role scope", func(c *Config) { c.Security.Jwt.Introspection.WorkloadScope = "orders.read" }},
 		{"requires mTLS client key", func(c *Config) { c.Security.Jwt.Introspection.ClientKeyFile = "" }},
 		{"caps positive cache", func(c *Config) { c.Security.Jwt.Introspection.PositiveCacheTTL = "6s" }},
 		{"caps negative cache", func(c *Config) { c.Security.Jwt.Introspection.NegativeCacheTTL = "2s" }},
