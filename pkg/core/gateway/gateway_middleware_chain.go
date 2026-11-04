@@ -29,6 +29,7 @@ func (g *Gateway) setupMiddleware() error {
 			NumouAccessTokens: g.config.Security.Jwt.NumouAccessTokens,
 			Issuer:        g.config.Security.Jwt.Issuer,
 			Audience:      g.config.Security.Jwt.Audience,
+			Introspection: g.config.Security.Jwt.Introspection,
 		}
 		g.router.Use(g.jwtAuthMiddleware(jwtCfg))
 	}
