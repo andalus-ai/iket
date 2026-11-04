@@ -412,6 +412,7 @@ type JWTConfig struct {
 	Issuer             string   `yaml:"issuer,omitempty"`
 	Audience           string   `yaml:"audience,omitempty"`
 	Introspection      NumouIntrospectionConfig `yaml:"introspection,omitempty"`
+	Introspection      NumouIntrospectionConfig `yaml:"introspection,omitempty"`
 }
 
 package config
