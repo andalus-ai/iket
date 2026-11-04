@@ -27,11 +27,12 @@ const maxIntrospectionResponseBytes = 16 * 1024
 var errNumouTokenInactive = errors.New("Numou access token is inactive")
 
 type numouIntrospectionResponse struct {
-	Active            bool   \`json:"active"\`
-	ClientID          string \`json:"client_id"\`
-	TenantID          string \`json:"tenant_id"\`
-	ApplicationID     string \`json:"application_id"\`
-	Scope             string \`json:"scope"\`
+	Active            bool   `json:"active"`
+	TokenType         string `json:"token_type,omitempty"`
+	ClientID          string `json:"client_id"`
+	TenantID          string `json:"tenant_id"`
+	ApplicationID     string `json:"application_id"`
+	Scope             string `json:"scope"`
 }
 
 type introspectionCacheEntry struct {
