@@ -18,6 +18,14 @@ import (
 )
 
 func (g *Gateway) jwtAuthMiddleware(cfg config.JWTConfig) func(http.Handler) http.Handler {
+	var introspector *numouIntrospector
+	var introspectionInitErr error
+	if cfg.NumouAccessTokens && cfg.Introspection.Enabled {
+		introspector, introspectionInitErr = newNumouIntrospector(cfg.Introspection)
+		if introspectionInitErr != nil {
+			g.logger.Error("Numou online introspection initialization failed", logging.Error(introspectionInitErr))
+		}
+	}
 	var pubKey *rsa.PublicKey
 	var useRS256 bool
 	if cfg.Enabled && contains(cfg.Algorithms, "RS256") && cfg.PublicKeyFile != "" {
@@ -87,12 +95,31 @@ func (g *Gateway) jwtAuthMiddleware(cfg config.JWTConfig) func(http.Handler) htt
 				_, _ = w.Write([]byte("Invalid JWT"))
 				return
 			}
-			if claims, ok := token.Claims.(jwt.MapClaims); ok {
+			claims, claimsOK := token.Claims.(jwt.MapClaims)
+			if !claimsOK && cfg.NumouAccessTokens {
+				http.Error(w, "Invalid JWT", http.StatusUnauthorized)
+				return
+			}
+			if claimsOK {
 				if cfg.NumouAccessTokens {
 					if err := validateNumouAccessTokenClaims(claims, cfg.Issuer, cfg.Audience, time.Now()); err != nil {
-						w.WriteHeader(http.StatusUnauthorized)
-						_, _ = w.Write([]byte("Invalid JWT"))
+						http.Error(w, "Invalid JWT", http.StatusUnauthorized)
 						return
+					}
+					if cfg.Introspection.Enabled {
+						if introspectionInitErr != nil || introspector == nil {
+							http.Error(w, "Authentication service unavailable", http.StatusServiceUnavailable)
+							return
+						}
+						if err := introspector.validate(r.Context(), tokenStr, claims); err != nil {
+							if errors.Is(err, errNumouTokenInactive) {
+								http.Error(w, "Invalid JWT", http.StatusUnauthorized)
+							} else {
+								g.logger.Warn("Numou introspection unavailable", logging.Error(err))
+								http.Error(w, "Authentication service unavailable", http.StatusServiceUnavailable)
+							}
+							return
+						}
 					}
 					r.Header.Set("X-Tenant-ID", stringClaim(claims, "tenant_id"))
 					r.Header.Set("X-Application-ID", stringClaim(claims, "application_id"))
