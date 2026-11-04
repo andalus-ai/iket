@@ -65,7 +65,7 @@ func newNumouIntrospector(cfg config.NumouIntrospectionConfig) (*numouIntrospect
 	cert, err := tls.LoadX509KeyPair(cfg.ClientCertFile, cfg.ClientKeyFile)
 	if err != nil { return nil, err }
 	timeout, err := time.ParseDuration(cfg.Timeout)
-	if err != nil || timeout <= 0 { return nil, errors.New("invalid introspection timeout") }
+	if err != nil || timeout <= 0 || timeout > 10*time.Second { return nil, errors.New("invalid introspection timeout") }
 	positive, err := time.ParseDuration(cfg.PositiveCacheTTL)
 	if err != nil || positive <= 0 || positive > 5*time.Second { return nil, errors.New("invalid introspection positive cache TTL") }
 	negative, err := time.ParseDuration(cfg.NegativeCacheTTL)
