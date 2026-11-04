@@ -79,9 +79,9 @@ func TestNumouIntrospectionRejectsInactiveAndCachesBriefly(t *testing.T) {
 
 func TestNumouIntrospectionFailsClosedOnIdentityMismatchAndMalformedResponse(t *testing.T) {
 	tests := []struct{name, body string}{
-		{"tenant mismatch", `{"active":true,"client_id":"nmc_client_test","tenant_id":"different","application_id":"b2b1b84d-23d8-4a9b-8b42-4f2e7f2d6c11","scope":"orders.read orders.write"}`},
-		{"scope escalation", `{"active":true,"client_id":"nmc_client_test","tenant_id":"8d5d8a7e-6d6b-4f0a-9d1f-7cfa8f35c2b1","application_id":"b2b1b84d-23d8-4a9b-8b42-4f2e7f2d6c11","scope":"orders.read admin"}`},
-		{"unknown response field", `{"active":true,"client_id":"nmc_client_test","tenant_id":"8d5d8a7e-6d6b-4f0a-9d1f-7cfa8f35c2b1","application_id":"b2b1b84d-23d8-4a9b-8b42-4f2e7f2d6c11","scope":"orders.read orders.write","secret":"leak"}`},
+		{"tenant mismatch", `{"active":true,"token_type":"Bearer","client_id":"nmc_client_test","tenant_id":"different","application_id":"b2b1b84d-23d8-4a9b-8b42-4f2e7f2d6c11","scope":"orders.read orders.write"}`},
+		{"scope escalation", `{"active":true,"token_type":"Bearer","client_id":"nmc_client_test","tenant_id":"8d5d8a7e-6d6b-4f0a-9d1f-7cfa8f35c2b1","application_id":"b2b1b84d-23d8-4a9b-8b42-4f2e7f2d6c11","scope":"orders.read admin"}`},
+		{"unknown response field", `{"active":true,"token_type":"Bearer","client_id":"nmc_client_test","tenant_id":"8d5d8a7e-6d6b-4f0a-9d1f-7cfa8f35c2b1","application_id":"b2b1b84d-23d8-4a9b-8b42-4f2e7f2d6c11","scope":"orders.read orders.write","secret":"leak"}`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
