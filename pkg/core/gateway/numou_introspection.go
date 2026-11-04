@@ -161,7 +161,10 @@ func (i *numouIntrospector) request(ctx context.Context, rawToken string, claims
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&result); err != nil { return false, err }
+	var trailing interface{}
+	if err := decoder.Decode(&trailing); err != io.EOF { return false, errors.New("Numou introspection returned trailing JSON data") }
 	if !result.Active { return false, nil }
+	if result.TokenType != "Bearer" { return false, errors.New("Numou introspection returned an invalid token type") }
 	if result.ClientID != stringClaim(claims, "client_id") ||
 		result.TenantID != stringClaim(claims, "tenant_id") ||
 		result.ApplicationID != stringClaim(claims, "application_id") {
