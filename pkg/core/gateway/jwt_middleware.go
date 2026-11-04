@@ -23,7 +23,7 @@ func (g *Gateway) jwtAuthMiddleware(cfg config.JWTConfig) func(http.Handler) htt
 	if cfg.NumouAccessTokens && cfg.Introspection.Enabled {
 		introspector, introspectionInitErr = newNumouIntrospector(cfg.Introspection)
 		if introspectionInitErr != nil {
-			g.logger.Error("Numou online introspection initialization failed", logging.Error(introspectionInitErr))
+			g.logger.Warn("Numou online introspection initialization failed", logging.Error(introspectionInitErr))
 		}
 	}
 	var pubKey *rsa.PublicKey
