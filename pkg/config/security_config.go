@@ -411,4 +411,20 @@ type JWTConfig struct {
 	NumouAccessTokens  bool     `yaml:"numouAccessTokens,omitempty"`
 	Issuer             string   `yaml:"issuer,omitempty"`
 	Audience           string   `yaml:"audience,omitempty"`
+	Introspection      NumouIntrospectionConfig `yaml:"introspection,omitempty"`
+}
+
+package config
+
+// NumouIntrospectionConfig configures the authenticated online credential-state check.
+type NumouIntrospectionConfig struct {
+ Enabled bool `yaml:"enabled,omitempty"`
+ URL string `yaml:"url,omitempty"`
+ CAFile string `yaml:"caFile,omitempty"`
+ ClientCertFile string `yaml:"clientCertFile,omitempty"`
+ ClientKeyFile string `yaml:"clientKeyFile,omitempty"`
+ Timeout string `yaml:"timeout,omitempty"`
+ PositiveCacheTTL string `yaml:"positiveCacheTTL,omitempty"`
+ NegativeCacheTTL string `yaml:"negativeCacheTTL,omitempty"`
+ CacheMaxEntries int `yaml:"cacheMaxEntries,omitempty"`
 }
