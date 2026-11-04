@@ -46,15 +46,23 @@ type introspectionFlight struct {
 }
 
 type numouIntrospector struct {
-	client       *http.Client
-	endpoint     string
-	positiveTTL  time.Duration
-	negativeTTL  time.Duration
-	maxEntries   int
-	mu           sync.Mutex
-	cache        map[string]introspectionCacheEntry
-	flights      map[string]*introspectionFlight
-	now          func() time.Time
+	client           *http.Client
+	endpoint         string
+	tokenEndpoint    string
+	clientID         string
+	clientSecretFile string
+	workloadScope    string
+	tokenMu          sync.Mutex
+	workloadToken    string
+	workloadTokenExp time.Time
+	getWorkloadToken func(context.Context) (string, error)
+	positiveTTL      time.Duration
+	negativeTTL      time.Duration
+	maxEntries       int
+	mu               sync.Mutex
+	cache            map[string]introspectionCacheEntry
+	flights          map[string]*introspectionFlight
+	now              func() time.Time
 }
 
 func newNumouIntrospector(cfg config.NumouIntrospectionConfig) (*numouIntrospector, error) {
@@ -85,14 +93,18 @@ func newNumouIntrospector(cfg config.NumouIntrospectionConfig) (*numouIntrospect
 		MaxIdleConnsPerHost: 8,
 		IdleConnTimeout: 90 * time.Second,
 	}
-	return &numouIntrospector{
+	i := &numouIntrospector{
 		client: &http.Client{Transport: transport, Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		}},
-		endpoint: cfg.URL, positiveTTL: positive, negativeTTL: negative,
+		endpoint: cfg.URL, tokenEndpoint: cfg.TokenURL, clientID: cfg.ClientID,
+		clientSecretFile: cfg.ClientSecretFile, workloadScope: cfg.WorkloadScope,
+		positiveTTL: positive, negativeTTL: negative,
 		maxEntries: cfg.CacheMaxEntries, cache: make(map[string]introspectionCacheEntry),
 		flights: make(map[string]*introspectionFlight), now: time.Now,
-	}, nil
+	}
+	i.getWorkloadToken = i.acquireWorkloadToken
+	return i, nil
 }
 
 func (i *numouIntrospector) validate(ctx context.Context, rawToken string, claims jwt.MapClaims) error {
@@ -150,6 +162,11 @@ func (i *numouIntrospector) request(ctx context.Context, rawToken string, claims
 	if err != nil { return false, err }
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
+	workloadToken, err := i.getWorkloadToken(ctx)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Authorization", "Bearer "+workloadToken)
 	resp, err := i.client.Do(req)
 	if err != nil { return false, err }
 	defer resp.Body.Close()
