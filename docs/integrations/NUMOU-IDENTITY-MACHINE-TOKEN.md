@@ -70,6 +70,10 @@ security:
     introspection:
       enabled: true
       url: https://identity.numou.internal/internal/v1/oauth2/introspect
+      tokenUrl: https://identity.numou.internal/api/v1/oauth2/token
+      clientId: nmc_iket_introspection
+      clientSecretFile: /run/secrets/iket-introspection-client-secret
+      workloadScope: oauth-introspect
       caFile: /run/secrets/identity-ca.pem
       clientCertFile: /run/secrets/iket-introspection-client.crt
       clientKeyFile: /run/secrets/iket-introspection-client.key
@@ -79,7 +83,7 @@ security:
       cacheMaxEntries: 10000
 ```
 
-The Iket workload certificate must be authorized by the Identity deployment for the dedicated `oauth-introspect` role. The endpoint must not be publicly exposed. Use a dedicated workload certificate; do not reuse a developer's OAuth client secret.
+The Iket workload must present both a dedicated mTLS client certificate and a dedicated OAuth client-credentials identity provisioned in Numou with the `oauth-introspect` scope. Iket obtains a short-lived bearer token from the configured token endpoint using the mounted client-secret file, then sends that bearer token over the mTLS channel to introspection. Numou maps the authorized scope into the JWT `groups` role claim consumed by `@RolesAllowed`. The endpoint must not be publicly exposed. Do not reuse a developer's OAuth client secret.
 
 Iket stores only a SHA-256 digest of each raw token as the in-memory cache key. Positive cache TTL is capped at five seconds and never extends beyond JWT expiry; negative TTL is capped at one second. Requests for the same token are coalesced. The cache is bounded and evicts expired/earliest-expiring entries.
 
