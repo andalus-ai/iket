@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/bhangun/iket/pkg/config"
 	"github.com/bhangun/iket/pkg/core/authcontext"
@@ -64,6 +65,8 @@ func (g *Gateway) jwtAuthMiddleware(cfg config.JWTConfig) func(http.Handler) htt
 					}
 					return pubKey, nil
 				})
+			} else if cfg.NumouAccessTokens {
+				err = errors.New("Numou machine tokens require an RS256 public key")
 			} else {
 				token, err = jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
 					if token.Method.Alg() != "HS256" {
@@ -85,6 +88,15 @@ func (g *Gateway) jwtAuthMiddleware(cfg config.JWTConfig) func(http.Handler) htt
 				return
 			}
 			if claims, ok := token.Claims.(jwt.MapClaims); ok {
+				if cfg.NumouAccessTokens {
+					if err := validateNumouAccessTokenClaims(claims, cfg.Issuer, cfg.Audience, time.Now()); err != nil {
+						w.WriteHeader(http.StatusUnauthorized)
+						_, _ = w.Write([]byte("Invalid JWT"))
+						return
+					}
+					r.Header.Set("X-Tenant-ID", stringClaim(claims, "tenant_id"))
+					r.Header.Set("X-Application-ID", stringClaim(claims, "application_id"))
+				}
 				ctx := context.WithValue(r.Context(), jwtClaimsKey, claims)
 				ctx = authcontext.WithPrincipal(ctx, principalFromMapClaims(claims))
 				r = r.WithContext(ctx)
