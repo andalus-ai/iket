@@ -99,4 +99,4 @@ Unit tests cover the Numou-specific claim contract. Deployment integration tests
 - missing or malformed machine claims are rejected;
 - caller-supplied tenant/application headers are overwritten;
 - route scopes are enforced independently;
-- revoked/rotated credentials are rejected once the future online revocation contract is integrated.
+- revoked/rotated credentials are rejected on the next uncached introspection request, subject to the configured positive-cache TTL.
