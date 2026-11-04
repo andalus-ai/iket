@@ -234,9 +234,14 @@ func (i *numouIntrospector) acquireWorkloadToken(ctx context.Context) (string, e
 	if i.workloadToken != "" && now.Add(10*time.Second).Before(i.workloadTokenExp) {
 		return i.workloadToken, nil
 	}
-	secretBytes, err := os.ReadFile(i.clientSecretFile)
+	secretFile, err := os.Open(i.clientSecretFile)
 	if err != nil {
 		return "", errors.New("unable to read Numou introspection workload secret")
+	}
+	secretBytes, readErr := io.ReadAll(io.LimitReader(secretFile, 4097))
+	closeErr := secretFile.Close()
+	if readErr != nil || closeErr != nil || len(secretBytes) > 4096 {
+		return "", errors.New("Numou introspection workload secret file is unreadable or too large")
 	}
 	secret := strings.TrimSpace(string(secretBytes))
 	if secret == "" || len(secret) > 4096 {
