@@ -23,7 +23,7 @@ func (r *SecurityConfigRule) Validate(cfg *Config) error {
 		if strings.TrimSpace(cfg.Security.Jwt.Issuer) == "" || strings.TrimSpace(cfg.Security.Jwt.Audience) == "" {
 			return errors.NewValidationError("security.jwt.issuer/audience", "issuer and audience are required for Numou access tokens")
 		}
-		if len(cfg.Security.Jwt.Algorithms) > 0 && (len(cfg.Security.Jwt.Algorithms) != 1 || cfg.Security.Jwt.Algorithms[0] != "RS256") {
+		if len(cfg.Security.Jwt.Algorithms) != 1 || cfg.Security.Jwt.Algorithms[0] != "RS256" {
 			return errors.NewValidationError("security.jwt.algorithms", "Numou access tokens require RS256 only")
 		}
 	}
