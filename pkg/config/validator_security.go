@@ -13,6 +13,32 @@ import (
 type SecurityConfigRule struct{}
 
 func (r *SecurityConfigRule) Validate(cfg *Config) error {
+	if cfg.Security.Jwt.Introspection.Enabled {
+		ic := cfg.Security.Jwt.Introspection
+		if !cfg.Security.Jwt.NumouAccessTokens {
+			return errors.NewValidationError("security.jwt.introspection", "online introspection requires Numou access-token validation")
+		}
+		u, err := url.Parse(strings.TrimSpace(ic.URL))
+		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
+			return errors.NewValidationError("security.jwt.introspection.url", "a valid HTTPS introspection URL is required")
+		}
+		if strings.TrimSpace(ic.CAFile) == "" || strings.TrimSpace(ic.ClientCertFile) == "" || strings.TrimSpace(ic.ClientKeyFile) == "" {
+			return errors.NewValidationError("security.jwt.introspection", "CA, client certificate and client key files are required for mTLS")
+		}
+		for field, raw := range map[string]string{"timeout": ic.Timeout, "positiveCacheTTL": ic.PositiveCacheTTL, "negativeCacheTTL": ic.NegativeCacheTTL} {
+			if strings.TrimSpace(raw) == "" { return errors.NewValidationError("security.jwt.introspection."+field, "duration is required") }
+			d, parseErr := time.ParseDuration(raw)
+			if parseErr != nil || d <= 0 { return errors.NewValidationError("security.jwt.introspection."+field, "duration must be positive and valid") }
+		}
+		positive, _ := time.ParseDuration(ic.PositiveCacheTTL)
+		negative, _ := time.ParseDuration(ic.NegativeCacheTTL)
+		if positive > 5*time.Second || negative > time.Second {
+			return errors.NewValidationError("security.jwt.introspection", "positive cache TTL must be <= 5s and negative cache TTL <= 1s")
+		}
+		if ic.CacheMaxEntries < 1 || ic.CacheMaxEntries > 100000 {
+			return errors.NewValidationError("security.jwt.introspection.cacheMaxEntries", "cache max entries must be between 1 and 100000")
+		}
+	}
 	if cfg.Security.Jwt.NumouAccessTokens {
 		if !cfg.Security.Jwt.Enabled {
 			return errors.NewValidationError("security.jwt.enabled", "JWT must be enabled for Numou access tokens")
