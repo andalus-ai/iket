@@ -24,6 +24,7 @@ type ManagementAPI struct {
 	gateway  *runtime.Gateway
 	logger   *logging.Logger
 	registry *plugin.Registry
+	security *config.SecurityConfig
 	mu       sync.RWMutex
 
 	// WebSocket upgrader
@@ -42,11 +43,7 @@ func NewManagementAPI(gateway *runtime.Gateway, logger *logging.Logger, registry
 		gateway:  gateway,
 		logger:   logger,
 		registry: registry,
-		upgrader: websocket.Upgrader{
-			CheckOrigin: func(r *http.Request) bool {
-				return true // Allow all origins for now
-			},
-		},
+		upgrader: websocket.Upgrader{},
 		statusSubscribers:  make(map[*websocket.Conn]bool),
 		metricsSubscribers: make(map[*websocket.Conn]bool),
 		logsSubscribers:    make(map[*websocket.Conn]bool),
@@ -64,21 +61,9 @@ func (api *ManagementAPI) RegisterRoutes(router *mux.Router) {
 	// API v1 routes
 	v1 := router.PathPrefix("/api/v1").Subrouter()
 
-	// Add CORS middleware for management API
-	v1.Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-
-			if r.Method == "OPTIONS" {
-				w.WriteHeader(http.StatusOK)
-				return
-			}
-
-			next.ServeHTTP(w, r)
-		})
-	})
+	// Management endpoints are privileged operator APIs. Require verified mTLS
+	// and configured Basic Auth before any REST or WebSocket handler runs.
+	v1.Use(api.managementSecurityMiddleware)
 
 	// Gateway management
 	v1.HandleFunc("/gateway/status", api.getGatewayStatus).Methods("GET")

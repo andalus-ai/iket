@@ -11,7 +11,7 @@ The Iket Management API provides REST endpoints and WebSocket connections for:
 - Real-time metrics and logs
 - Configuration reloading
 
-All management operations are secured by default using **mTLS (Mutual TLS)** and **HTTP Basic Authentication**.
+All management REST, SSE, and WebSocket operations require **verified mTLS (Mutual TLS)** and **HTTP Basic Authentication**. The management API fails closed when Basic Auth is disabled or no operator credentials are configured. Plain HTTP requests are rejected even when valid Basic Auth credentials are supplied.
 
 ---
 
@@ -137,6 +137,10 @@ func main() {
 ```
 
 ---
+
+## Browser origin policy
+
+The management API does not enable cross-origin browser access by default. WebSocket upgrades use the Gorilla WebSocket same-origin policy; wildcard origins and wildcard CORS headers are not permitted. Operator dashboards should be served from the same origin as the management API or use a separately secured backend-for-frontend.
 
 ## WebSocket for Real-time Monitoring
 
