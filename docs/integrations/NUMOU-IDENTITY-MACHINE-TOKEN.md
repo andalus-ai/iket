@@ -50,7 +50,7 @@ The JWT parser validates the signature and registered temporal claims. The Numou
 
 After successful validation, Iket builds the authenticated principal with client, tenant, application, credential-version, token-use and scope attributes. It overwrites inbound \`X-Tenant-ID\` and \`X-Application-ID\` with values from the verified token. Callers cannot select tenant or application context with headers.
 
-Route-level scope authorization remains a separate policy decision. Authentication does not imply authorization for every route.
+Route-level scope authorization remains a separate policy decision. Authentication does not imply authorization for every route. For Numou machine access tokens (`token_use=access` with a verified `client_id`), every scope configured on the service and route must be present (all-of semantics). Service and route scope requirements are combined, so a token must satisfy the complete set. Existing non-Numou authentication providers retain the gateway's legacy any-of behavior for compatibility. Routes without configured scopes do not gain an implicit scope requirement.
 
 ## Online introspection and revocation
 
