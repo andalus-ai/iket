@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ func testIntrospector(server *httptest.Server, positive, negative time.Duration)
 		positiveTTL: positive, negativeTTL: negative, maxEntries: 16,
 		cache: make(map[string]introspectionCacheEntry),
 		flights: make(map[string]*introspectionFlight), now: time.Now,
+		getWorkloadToken: func(context.Context) (string, error) { return "test-workload-bearer", nil },
 	}
 }
 
@@ -37,8 +39,9 @@ func TestNumouIntrospectionAcceptsActiveAndCachesByTokenDigest(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
+		if r.Header.Get("Authorization") != "Bearer test-workload-bearer" { t.Errorf("workload bearer token missing") }
 		if err := r.ParseForm(); err != nil { t.Errorf("parse form: %v", err) }
-		if r.Form.Get("token") != "sensitive-token-value" { t.Errorf("token form value missing") }
+		if r.Form.Get("token") != "sensitive-token-value" { t.Errorf("submitted access token missing") }
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"active": true, "token_type": "Bearer", "client_id": "nmc_client_test",
@@ -110,5 +113,52 @@ func TestNumouIntrospectionRequestUsesFormEncoding(t *testing.T) {
 	form := url.Values{"token": []string{"token+with&reserved"}}
 	if got := form.Encode(); got != "token=token%2Bwith%26reserved" {
 		t.Fatalf("unexpected encoded token form: %s", got)
+	}
+}
+
+func TestAcquireWorkloadTokenUsesClientCredentialsAndCachesShortLivedToken(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.URL.Path != "/token" { t.Errorf("path=%s want /token", r.URL.Path) }
+		user, pass, ok := r.BasicAuth()
+		if !ok || user != "nmc_iket_introspection" || pass != "mounted-secret" {
+			t.Errorf("unexpected workload client authentication")
+		}
+		if err := r.ParseForm(); err != nil { t.Errorf("parse form: %v", err) }
+		if r.Form.Get("grant_type") != "client_credentials" || r.Form.Get("scope") != "oauth-introspect" {
+			t.Errorf("unexpected grant form: %v", r.Form)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"workload-access-token","token_type":"Bearer","expires_in":300,"scope":"oauth-introspect"}`))
+	}))
+	defer server.Close()
+	secretFile := t.TempDir() + "/client-secret"
+	if err := os.WriteFile(secretFile, []byte("mounted-secret\n"), 0600); err != nil { t.Fatal(err) }
+	i := &numouIntrospector{
+		client: server.Client(), tokenEndpoint: server.URL + "/token",
+		clientID: "nmc_iket_introspection", clientSecretFile: secretFile,
+		workloadScope: "oauth-introspect", now: time.Now,
+	}
+	first, err := i.acquireWorkloadToken(context.Background())
+	if err != nil { t.Fatal(err) }
+	second, err := i.acquireWorkloadToken(context.Background())
+	if err != nil { t.Fatal(err) }
+	if first != "workload-access-token" || second != first { t.Fatalf("unexpected cached tokens %q / %q", first, second) }
+	if got := calls.Load(); got != 1 { t.Fatalf("expected one token exchange, got %d", got) }
+}
+
+func TestAcquireWorkloadTokenRejectsMissingRoleScope(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"token","token_type":"Bearer","expires_in":300,"scope":"orders.read"}`))
+	}))
+	defer server.Close()
+	secretFile := t.TempDir() + "/client-secret"
+	if err := os.WriteFile(secretFile, []byte("secret"), 0600); err != nil { t.Fatal(err) }
+	i := &numouIntrospector{client: server.Client(), tokenEndpoint: server.URL, clientID: "client",
+		clientSecretFile: secretFile, workloadScope: "oauth-introspect", now: time.Now}
+	if _, err := i.acquireWorkloadToken(context.Background()); err == nil {
+		t.Fatal("expected token without oauth-introspect scope to be rejected")
 	}
 }
