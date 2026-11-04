@@ -19,6 +19,10 @@ type Principal struct {
 	Groups    []string
 	Scopes    []string
 	ClientID  string
+	TenantID  string
+	ApplicationID string
+	CredentialVersion int64
+	TokenUse string
 	Issuer    string
 	Audience  []string
 	ExpiresAt *time.Time
