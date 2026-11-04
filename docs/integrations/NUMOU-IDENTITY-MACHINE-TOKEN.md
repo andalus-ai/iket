@@ -52,9 +52,40 @@ After successful validation, Iket builds the authenticated principal with client
 
 Route-level scope authorization remains a separate policy decision. Authentication does not imply authorization for every route.
 
-## Revocation limitation
+## Online introspection and revocation
 
-This profile validates JWTs locally. It does **not** query Numou's credential store and therefore cannot immediately detect credential revocation or rotation after a token has been issued. Tokens remain usable until expiry unless a separate revocation/introspection mechanism is deployed. Keep access-token lifetimes short and do not claim immediate revocation from this local validation alone.
+For live credential-state enforcement, enable the optional online introspection profile. Iket first verifies the RS256 JWT locally, then calls Numou Identity's internal `POST /internal/v1/oauth2/introspect` endpoint over mutual TLS. Identity remains the authority for credential status, tenant/application ownership, credential version and current scopes.
+
+Example:
+
+```yaml
+security:
+  jwt:
+    enabled: true
+    numouAccessTokens: true
+    algorithms: [RS256]
+    publicKeyFile: /run/secrets/numou-identity-public.pem
+    issuer: https://identity.numou.internal
+    audience: numou-iket
+    introspection:
+      enabled: true
+      url: https://identity.numou.internal/internal/v1/oauth2/introspect
+      caFile: /run/secrets/identity-ca.pem
+      clientCertFile: /run/secrets/iket-introspection-client.crt
+      clientKeyFile: /run/secrets/iket-introspection-client.key
+      timeout: 2s
+      positiveCacheTTL: 5s
+      negativeCacheTTL: 1s
+      cacheMaxEntries: 10000
+```
+
+The Iket workload certificate must be authorized by the Identity deployment for the dedicated `oauth-introspect` role. The endpoint must not be publicly exposed. Use a dedicated workload certificate; do not reuse a developer's OAuth client secret.
+
+Iket stores only a SHA-256 digest of each raw token as the in-memory cache key. Positive cache TTL is capped at five seconds and never extends beyond JWT expiry; negative TTL is capped at one second. Requests for the same token are coalesced. The cache is bounded and evicts expired/earliest-expiring entries.
+
+A positive cache means revocation is observed within the configured positive TTL plus request/propagation latency, not instantaneously. Identity timeouts, TLS errors, non-200 responses, malformed responses and identity mismatches fail closed with HTTP 503. A confirmed inactive token fails with HTTP 401. If introspection is enabled but client TLS configuration cannot initialize, protected Numou-token requests fail closed.
+
+If online introspection is disabled, the gateway uses local JWT validation only and tokens remain usable until expiry after revocation/rotation.
 
 ## Key rotation
 
