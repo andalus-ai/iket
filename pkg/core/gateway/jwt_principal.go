@@ -22,6 +22,10 @@ func principalFromMapClaims(claims jwt.MapClaims) authcontext.Principal {
 		Groups:    stringListClaim(claims, "groups", "group"),
 		Scopes:    scopesFromMapClaims(claims),
 		ClientID:  firstNonEmpty(stringClaim(claims, "client_id"), stringClaim(claims, "azp")),
+		TenantID: stringClaim(claims, "tenant_id"),
+		ApplicationID: stringClaim(claims, "application_id"),
+		CredentialVersion: int64Claim(claims, "credential_version"),
+		TokenUse: stringClaim(claims, "token_use"),
 		Issuer:    stringClaim(claims, "iss"),
 		Audience:  stringListClaim(claims, "aud"),
 		ExpiresAt: unixClaimTime(claims, "exp"),
@@ -137,4 +141,10 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func int64Claim(claims jwt.MapClaims, key string) int64 {
+	value, ok := numericClaim(claims[key])
+	if !ok || value < 0 || value != float64(int64(value)) { return 0 }
+	return int64(value)
 }

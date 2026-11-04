@@ -13,6 +13,20 @@ import (
 type SecurityConfigRule struct{}
 
 func (r *SecurityConfigRule) Validate(cfg *Config) error {
+	if cfg.Security.Jwt.NumouAccessTokens {
+		if !cfg.Security.Jwt.Enabled {
+			return errors.NewValidationError("security.jwt.enabled", "JWT must be enabled for Numou access tokens")
+		}
+		if strings.TrimSpace(cfg.Security.Jwt.PublicKeyFile) == "" {
+			return errors.NewValidationError("security.jwt.publicKeyFile", "RS256 public key file is required for Numou access tokens")
+		}
+		if strings.TrimSpace(cfg.Security.Jwt.Issuer) == "" || strings.TrimSpace(cfg.Security.Jwt.Audience) == "" {
+			return errors.NewValidationError("security.jwt.issuer/audience", "issuer and audience are required for Numou access tokens")
+		}
+		if len(cfg.Security.Jwt.Algorithms) != 1 || cfg.Security.Jwt.Algorithms[0] != "RS256" {
+			return errors.NewValidationError("security.jwt.algorithms", "Numou access tokens require RS256 only")
+		}
+	}
 	if cfg.Security.TLS.Enabled {
 		if cfg.Security.TLS.CertFile == "" {
 			return errors.NewValidationError("security.tls.certFile", "certificate file is required when TLS is enabled")

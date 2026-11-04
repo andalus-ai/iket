@@ -403,9 +403,12 @@ type LimitAlertRecipientProfile struct {
 
 // JWTConfig holds JWT auth settings
 type JWTConfig struct {
-	Enabled       bool     `yaml:"enabled"`
-	Secret        string   `yaml:"secret"`
-	Algorithms    []string `yaml:"algorithms"`
-	PublicKeyFile string   `yaml:"publicKeyFile"`
-	Required      bool     `yaml:"required"`
+	Enabled            bool     `yaml:"enabled"`
+	Secret             string   `yaml:"secret"`
+	Algorithms         []string `yaml:"algorithms"`
+	PublicKeyFile      string   `yaml:"publicKeyFile"`
+	Required           bool     `yaml:"required"`
+	NumouAccessTokens  bool     `yaml:"numouAccessTokens,omitempty"`
+	Issuer             string   `yaml:"issuer,omitempty"`
+	Audience           string   `yaml:"audience,omitempty"`
 }

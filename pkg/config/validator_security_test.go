@@ -1905,3 +1905,42 @@ func TestSecurityConfigRuleAllowsValidBlockedApplyWindow(t *testing.T) {
 		t.Fatalf("expected valid blocked apply window to validate, got %v", err)
 	}
 }
+
+
+func TestSecurityConfigRuleRequiresStrictNumouJWTTrustProfile(t *testing.T) {
+	base := SecurityConfig{
+		Jwt: JWTConfig{
+			Enabled: true, NumouAccessTokens: true,
+			Algorithms: []string{"RS256"}, PublicKeyFile: "/run/secrets/numou-public.pem",
+			Issuer: "https://identity.numou.internal", Audience: "numou-iket",
+		},
+	}
+	valid := &Config{Server: ServerConfig{Port: 8080}, Security: base}
+	if err := NewConfigValidator().Validate(valid); err != nil {
+		t.Fatalf("expected valid Numou JWT trust profile, got %v", err)
+	}
+
+	cases := []struct {
+		name string
+		mutate func(*JWTConfig)
+	}{
+		{"jwt disabled", func(c *JWTConfig) { c.Enabled = false }},
+		{"missing public key", func(c *JWTConfig) { c.PublicKeyFile = "" }},
+		{"missing issuer", func(c *JWTConfig) { c.Issuer = "" }},
+		{"missing audience", func(c *JWTConfig) { c.Audience = "" }},
+		{"hmac fallback", func(c *JWTConfig) { c.Algorithms = []string{"RS256", "HS256"} }},
+		{"implicit algorithm", func(c *JWTConfig) { c.Algorithms = nil }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			security := base
+			jwtConfig := security.Jwt
+			tc.mutate(&jwtConfig)
+			security.Jwt = jwtConfig
+			err := NewConfigValidator().Validate(&Config{Server: ServerConfig{Port: 8080}, Security: security})
+			if err == nil {
+				t.Fatal("expected invalid Numou JWT profile to fail validation")
+			}
+		})
+	}
+}
