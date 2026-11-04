@@ -120,7 +120,16 @@ func requireRolesMiddleware(requiredRoles []string) func(http.Handler) http.Hand
 func requireScopesMiddleware(requiredScopes []string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			matched, present := authcontext.HasAnyScope(r.Context(), requiredScopes)
+			principal, hasPrincipal := authcontext.PrincipalFromContext(r.Context())
+			machineToken := hasPrincipal && principal.TokenUse == "access" && principal.ClientID != ""
+			var matched, present bool
+			if machineToken {
+				scopes, ok := authcontext.Scopes(r.Context())
+				present = ok && len(scopes) > 0
+				matched = present && hasAllRequiredScopes(scopes, requiredScopes)
+			} else {
+				matched, present = authcontext.HasAnyScope(r.Context(), requiredScopes)
+			}
 			if !present {
 				w.WriteHeader(http.StatusForbidden)
 				w.Write([]byte(`{"error":"Forbidden","message":"No scopes found for authenticated principal"}`))
@@ -134,6 +143,24 @@ func requireScopesMiddleware(requiredScopes []string) func(http.Handler) http.Ha
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// Numou client-credentials tokens must satisfy every configured route/service scope.
+ // Legacy providers retain the established any-of behavior above.
+func hasAllRequiredScopes(actual, required []string) bool {
+	for _, wanted := range required {
+		found := false
+		for _, granted := range actual {
+			if granted == wanted {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return len(required) > 0
 }
 
 // requireGroupMiddleware returns a middleware that enforces the required client group.
