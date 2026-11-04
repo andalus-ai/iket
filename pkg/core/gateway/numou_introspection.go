@@ -24,6 +24,8 @@ import (
 
 const maxIntrospectionResponseBytes = 16 * 1024
 
+var errNumouTokenInactive = errors.New("Numou access token is inactive")
+
 type numouIntrospectionResponse struct {
 	Active            bool   \`json:"active"\`
 	ClientID          string \`json:"client_id"\`
@@ -102,7 +104,7 @@ func (i *numouIntrospector) validate(ctx context.Context, rawToken string, claim
 		if now.Before(entry.expires) {
 			i.mu.Unlock()
 			if entry.active { return nil }
-			return errors.New("Numou access token is inactive")
+			return errNumouTokenInactive
 		}
 		delete(i.cache, key)
 	}
@@ -133,7 +135,7 @@ func (i *numouIntrospector) validate(ctx context.Context, rawToken string, claim
 			i.evictExpiredAndOverflowLocked()
 		}
 	}
-	if !active && err == nil { err = errors.New("Numou access token is inactive") }
+	if !active && err == nil { err = errNumouTokenInactive }
 	flight.err = err
 	delete(i.flights, key)
 	close(flight.done)
