@@ -116,7 +116,7 @@ func requireRolesMiddleware(requiredRoles []string) func(http.Handler) http.Hand
 	}
 }
 
-// requireScopesMiddleware returns a middleware that enforces at least one required scope.
+// requireScopesMiddleware enforces configured scopes for the authenticated principal.
 func requireScopesMiddleware(requiredScopes []string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
