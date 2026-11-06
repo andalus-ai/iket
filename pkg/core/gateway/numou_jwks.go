@@ -49,6 +49,7 @@ type numouJWKSResolver struct {
 	expiresAt   time.Time
 	staleUntil  time.Time
 	lastAttempt time.Time
+	lastFailure bool
 	now         func() time.Time
 }
 
@@ -120,11 +121,13 @@ func (r *numouJWKSResolver) key(ctx context.Context, kid string) (*rsa.PublicKey
 	if shouldRefresh {
 		r.lastAttempt = now
 		if err := r.refreshLocked(ctx); err != nil {
+			r.lastFailure = true
 			if cached != nil && now.Before(r.staleUntil) {
 				return cached, nil
 			}
 			return nil, err
 		}
+		r.lastFailure = false
 		if key := r.keys[kid]; key != nil {
 			return key, nil
 		}
@@ -133,7 +136,7 @@ func (r *numouJWKSResolver) key(ctx context.Context, kid string) (*rsa.PublicKey
 	if cached != nil && now.Before(r.staleUntil) {
 		return cached, nil
 	}
-	if cached != nil {
+	if cached != nil || r.lastFailure {
 		return nil, errJWKSUnavailable
 	}
 	return nil, errJWKSUnknownKey
