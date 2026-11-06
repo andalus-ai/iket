@@ -27,8 +27,17 @@ func (g *Gateway) jwtAuthMiddleware(cfg config.JWTConfig) func(http.Handler) htt
 		}
 	}
 	var pubKey *rsa.PublicKey
+	var jwksResolver *numouJWKSResolver
+	var jwksInitErr error
 	var useRS256 bool
-	if cfg.Enabled && contains(cfg.Algorithms, "RS256") && cfg.PublicKeyFile != "" {
+	if cfg.Enabled && cfg.NumouAccessTokens && cfg.JWKSURL != "" {
+		jwksResolver, jwksInitErr = newNumouJWKSResolver(cfg)
+		if jwksInitErr != nil {
+			g.logger.Warn("Numou JWKS resolver initialization failed", logging.Error(jwksInitErr))
+		} else {
+			useRS256 = true
+		}
+	} else if cfg.Enabled && contains(cfg.Algorithms, "RS256") && cfg.PublicKeyFile != "" {
 		k, err := loadRSAPublicKey(cfg.PublicKeyFile)
 		if err == nil {
 			pubKey = k
@@ -66,10 +75,18 @@ func (g *Gateway) jwtAuthMiddleware(cfg config.JWTConfig) func(http.Handler) htt
 			tokenStr := strings.TrimPrefix(auth, "Bearer ")
 			var token *jwt.Token
 			var err error
-			if useRS256 && pubKey != nil {
+			if cfg.NumouAccessTokens && cfg.JWKSURL != "" && jwksInitErr != nil {
+				http.Error(w, "Authentication service unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			if useRS256 && (pubKey != nil || jwksResolver != nil) {
 				token, err = jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
 					if token.Method.Alg() != "RS256" {
 						return nil, errors.New("unexpected signing method")
+					}
+					if jwksResolver != nil {
+						kid, _ := token.Header["kid"].(string)
+						return jwksResolver.key(r.Context(), kid)
 					}
 					return pubKey, nil
 				})
@@ -84,6 +101,11 @@ func (g *Gateway) jwtAuthMiddleware(cfg config.JWTConfig) func(http.Handler) htt
 				})
 			}
 			if err != nil || !token.Valid {
+				if errors.Is(err, errJWKSUnavailable) {
+					g.logger.Warn("Numou JWKS unavailable", logging.Error(err))
+					http.Error(w, "Authentication service unavailable", http.StatusServiceUnavailable)
+					return
+				}
 				g.logger.Warn("401 Unauthorized",
 					logging.String("reason", "Invalid JWT"),
 					logging.String("method", r.Method),
