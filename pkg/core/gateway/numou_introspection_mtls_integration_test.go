@@ -12,7 +12,6 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -76,8 +75,7 @@ func TestNumouIdentityMTLSClientCredentialsAndIntrospectionEndToEnd(t *testing.T
 			http.NotFound(w, r)
 		}
 	}))
-	server.Config.ClientCAs = clientCAPool
-	server.Config.ClientAuth = tls.RequireAndVerifyClientCert
+	server.TLS = &tls.Config{ClientCAs: clientCAPool, ClientAuth: tls.RequireAndVerifyClientCert, MinVersion: tls.VersionTLS12}
 	server.StartTLS()
 	defer server.Close()
 
@@ -98,8 +96,6 @@ func TestNumouIdentityMTLSClientCredentialsAndIntrospectionEndToEnd(t *testing.T
 		}
 	}
 
-	endpoint, err := url.Parse(server.URL)
-	if err != nil { t.Fatal(err) }
 	cfg := config.NumouIntrospectionConfig{
 		Enabled: true, URL: server.URL + "/internal/v1/oauth2/introspect",
 		TokenURL: server.URL + "/oauth/token", ClientID: "iket-workload",
@@ -108,7 +104,6 @@ func TestNumouIdentityMTLSClientCredentialsAndIntrospectionEndToEnd(t *testing.T
 		Timeout: "2s", PositiveCacheTTL: "5s", NegativeCacheTTL: "1s",
 		CacheMaxEntries: 32,
 	}
-	if endpoint.Scheme != "https" { t.Fatalf("test server must use HTTPS: %s", server.URL) }
 	introspector, err := newNumouIntrospector(cfg)
 	if err != nil { t.Fatalf("initialize configured mTLS introspector: %v", err) }
 
