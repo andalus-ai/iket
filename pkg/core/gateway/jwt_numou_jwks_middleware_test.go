@@ -3,7 +3,6 @@ package gateway
 import (
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/x509"
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
