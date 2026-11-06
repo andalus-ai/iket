@@ -219,7 +219,7 @@ func (r *numouJWKSResolver) refreshLocked(ctx context.Context) error {
 		if item.Alg != "" && item.Alg != "RS256" {
 			continue
 		}
-		if len(item.KeyOps) > 0 && !contains(item.KeyOps, "verify") {
+		if item.KeyOps != nil && !contains(item.KeyOps, "verify") {
 			continue
 		}
 		if item.KeyType != "RSA" {
