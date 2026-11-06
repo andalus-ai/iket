@@ -3,12 +3,15 @@ package gateway
 import (
 	"context"
 	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
 	"math/big"
 	"net/http"
+	"os"
 	"net/url"
 	"strings"
 	"sync"
@@ -66,7 +69,25 @@ func newNumouJWKSResolver(cfg config.JWTConfig) (*numouJWKSResolver, error) {
 	if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil || endpoint.Fragment != "" || !strings.EqualFold(endpoint.Host, issuer.Host) {
 		return nil, errors.New("Numou JWKS endpoint must be HTTPS on the configured Identity issuer host")
 	}
-	client := &http.Client{Timeout: timeout}
+	var roots *x509.CertPool
+	if strings.TrimSpace(cfg.JWKSCAFile) != "" {
+		caPEM, readErr := os.ReadFile(cfg.JWKSCAFile)
+		if readErr != nil {
+			return nil, errors.New("unable to read Numou JWKS CA file")
+		}
+		roots = x509.NewCertPool()
+		if !roots.AppendCertsFromPEM(caPEM) {
+			return nil, errors.New("Numou JWKS CA file contains no certificates")
+		}
+	}
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots},
+		Proxy: http.ProxyFromEnvironment,
+		MaxIdleConns: 16,
+		MaxIdleConnsPerHost: 4,
+		IdleConnTimeout: 90 * time.Second,
+	}
+	client := &http.Client{Transport: transport, Timeout: timeout}
 	return newNumouJWKSResolverWithClient(cfg, client)
 }
 
