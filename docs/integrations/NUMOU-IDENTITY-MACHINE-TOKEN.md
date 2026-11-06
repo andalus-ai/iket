@@ -104,6 +104,7 @@ security:
     numouAccessTokens: true
     algorithms: [RS256]
     jwksUrl: https://identity.numou.internal/.well-known/jwks.json
+    jwksCAFile: /run/secrets/identity-ca.pem # optional when Identity uses a private CA
     jwksCacheTTL: 5m
     jwksStaleTTL: 15m
     jwksRefreshTimeout: 2s
@@ -121,7 +122,7 @@ Operational behavior:
 - A successful refresh replaces the active key set. Keys removed from the published set are no longer accepted after that refresh. Keep old and new signing keys published together during the overlap period, publish the new key before signing with it, and remove the old key only after its maximum token lifetime and rollout overlap have elapsed.
 - JWKS removal controls signature trust; it does not provide immediate per-credential revocation. Keep online introspection enabled when revocation and credential-state checks are required.
 
-The static PEM mode remains supported for legacy deployments, but it has no automatic rotation and must be updated out-of-band before a new key signs tokens.
+The optional jwksCAFile pins a deployment-provided CA bundle for private Identity PKI; when omitted, Iket uses the operating-system trust roots. The static PEM mode remains supported for legacy deployments, but it has no automatic rotation and must be updated out-of-band before a new key signs tokens.
 
 ## Verification boundary
 
