@@ -32,6 +32,8 @@ func TestNumouJWKSResolverRotatesSigningKeysByKID(t *testing.T) {
 	defer server.Close()
 
 	resolver := newTestJWKSResolver(t, server)
+	now := time.Now()
+	resolver.now = func() time.Time { return now }
 	gotOld, err := resolver.key(context.Background(), "old-key")
 	if err != nil || gotOld.N.Cmp(oldKey.N) != 0 {
 		t.Fatalf("expected old key, got key=%v err=%v", gotOld, err)
@@ -40,6 +42,7 @@ func TestNumouJWKSResolverRotatesSigningKeysByKID(t *testing.T) {
 	// Publishing a new kid causes an early refresh even while the previous
 	// key set is within its normal cache TTL.
 	document.Store(mustJWKSJSON(t, jwkForTest("new-key", &newKey.PublicKey)))
+	now = now.Add(6 * time.Second)
 	gotNew, err := resolver.key(context.Background(), "new-key")
 	if err != nil || gotNew.N.Cmp(newKey.N) != 0 {
 		t.Fatalf("expected rotated key, got key=%v err=%v", gotNew, err)
@@ -70,19 +73,19 @@ func TestNumouJWKSResolverUsesStaleKnownKeyOnlyWithinBound(t *testing.T) {
 	if _, err := resolver.key(context.Background(), "active"); err != nil {
 		t.Fatalf("initial JWKS load failed: %v", err)
 	}
-	base := time.Now()
+	base := resolver.lastAttempt.Add(6 * time.Second)
 	resolver.now = func() time.Time { return base }
 	resolver.mu.Lock()
 	resolver.expiresAt = base.Add(-time.Second)
+	staleUntil := resolver.staleUntil
 	resolver.mu.Unlock()
 	unavailable.Store(true)
 
-	base = base.Add(31 * time.Second)
 	if got, err := resolver.key(context.Background(), "active"); err != nil || got.N.Cmp(key.N) != 0 {
 		t.Fatalf("expected stale known key during bounded outage, got key=%v err=%v", got, err)
 	}
 
-	base = base.Add(31 * time.Second)
+	base = staleUntil.Add(time.Second)
 	if _, err := resolver.key(context.Background(), "active"); !errors.Is(err, errJWKSUnavailable) {
 		t.Fatalf("expected stale key to expire and fail closed, got %v", err)
 	}
@@ -122,6 +125,8 @@ func TestNumouJWKSResolverRejectsMalformedAndOversizedKeySets(t *testing.T) {
 		{name: "malformed", body: []byte(`{"keys":[` )},
 		{name: "weak modulus", body: mustJWKSJSON(t, jwk{KeyType: "RSA", Use: "sig", Alg: "RS256", KeyID: "weak", Modulus: base64.RawURLEncoding.EncodeToString([]byte{1}), Exponent: "AQAB"})},
 		{name: "duplicate kid", body: mustJWKSJSON(t, jwkForTest("dup", &key.PublicKey), jwkForTest("dup", &key.PublicKey))},
+		{name: "private exponent", body: mustJWKSJSON(t, jwk{KeyType: "RSA", Use: "sig", Alg: "RS256", KeyID: "private", Modulus: base64.RawURLEncoding.EncodeToString(key.N.Bytes()), Exponent: "AQAB", D: "private"})},
+		{name: "non-verification key operations", body: mustJWKSJSON(t, jwk{KeyType: "RSA", Use: "sig", Alg: "RS256", KeyID: "encrypt-only", Modulus: base64.RawURLEncoding.EncodeToString(key.N.Bytes()), Exponent: "AQAB", KeyOps: []string{"encrypt"}})},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
