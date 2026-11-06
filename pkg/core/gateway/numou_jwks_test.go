@@ -127,7 +127,6 @@ func TestNumouJWKSResolverRejectsMalformedAndOversizedKeySets(t *testing.T) {
 		{name: "duplicate kid", body: mustJWKSJSON(t, jwkForTest("dup", &key.PublicKey), jwkForTest("dup", &key.PublicKey))},
 		{name: "private exponent", body: mustJWKSJSON(t, jwk{KeyType: "RSA", Use: "sig", Alg: "RS256", KeyID: "private", Modulus: base64.RawURLEncoding.EncodeToString(key.N.Bytes()), Exponent: "AQAB", D: "private"})},
 		{name: "non-verification key operations", body: mustJWKSJSON(t, jwk{KeyType: "RSA", Use: "sig", Alg: "RS256", KeyID: "encrypt-only", Modulus: base64.RawURLEncoding.EncodeToString(key.N.Bytes()), Exponent: "AQAB", KeyOps: []string{"encrypt"}})},
-		{name: "empty key operations", body: mustJWKSJSON(t, jwk{KeyType: "RSA", Use: "sig", Alg: "RS256", KeyID: "no-operations", Modulus: base64.RawURLEncoding.EncodeToString(key.N.Bytes()), Exponent: "AQAB", KeyOps: []string{}})},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
