@@ -22,6 +22,16 @@ func (r *SecurityConfigRule) Validate(cfg *Config) error {
 		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
 			return errors.NewValidationError("security.jwt.introspection.url", "a valid HTTPS introspection URL is required")
 		}
+		tokenURL, tokenErr := url.Parse(strings.TrimSpace(ic.TokenURL))
+		if tokenErr != nil || tokenURL.Scheme != "https" || tokenURL.Host == "" || tokenURL.User != nil || !strings.EqualFold(tokenURL.Host, u.Host) {
+			return errors.NewValidationError("security.jwt.introspection.tokenUrl", "a valid HTTPS token URL on the same trusted Identity host is required")
+		}
+		if strings.TrimSpace(ic.ClientID) == "" || strings.TrimSpace(ic.ClientSecretFile) == "" {
+			return errors.NewValidationError("security.jwt.introspection", "dedicated workload clientId and clientSecretFile are required")
+		}
+		if strings.TrimSpace(ic.WorkloadScope) != "oauth-introspect" {
+			return errors.NewValidationError("security.jwt.introspection.workloadScope", "workload scope must be exactly oauth-introspect")
+		}
 		if strings.TrimSpace(ic.CAFile) == "" || strings.TrimSpace(ic.ClientCertFile) == "" || strings.TrimSpace(ic.ClientKeyFile) == "" {
 			return errors.NewValidationError("security.jwt.introspection", "CA, client certificate and client key files are required for mTLS")
 		}
