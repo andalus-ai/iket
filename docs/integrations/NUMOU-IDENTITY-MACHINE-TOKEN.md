@@ -104,3 +104,8 @@ Unit tests cover the Numou-specific claim contract. Deployment integration tests
 - caller-supplied tenant/application headers are overwritten;
 - route scopes are enforced independently;
 - revoked/rotated credentials are rejected on the next uncached introspection request, subject to the configured positive-cache TTL.
+
+
+## mTLS integration test coverage
+
+Iket's gateway tests include an in-process HTTPS Identity fixture that requires and verifies a client certificate. The fixture exposes both the OAuth token endpoint and introspection endpoint on the same TLS host, checks the dedicated client-credentials grant and `oauth-introspect` scope, checks the separate workload bearer token on introspection, and verifies the submitted application token's active identity and scopes. The test uses an isolated test CA/certificate and temporary secret files; it does not require live Identity credentials. A passing unit/integration test does not replace deployment verification of the production ingress/service-mesh certificate trust and workload role mapping.
