@@ -53,11 +53,38 @@ func (r *SecurityConfigRule) Validate(cfg *Config) error {
 		if !cfg.Security.Jwt.Enabled {
 			return errors.NewValidationError("security.jwt.enabled", "JWT must be enabled for Numou access tokens")
 		}
-		if strings.TrimSpace(cfg.Security.Jwt.PublicKeyFile) == "" {
-			return errors.NewValidationError("security.jwt.publicKeyFile", "RS256 public key file is required for Numou access tokens")
+		jwtCfg := cfg.Security.Jwt
+		hasJWKS := strings.TrimSpace(jwtCfg.JWKSURL) != ""
+		hasStaticKey := strings.TrimSpace(jwtCfg.PublicKeyFile) != ""
+		if hasJWKS == hasStaticKey {
+			return errors.NewValidationError("security.jwt", "configure exactly one of publicKeyFile or jwksUrl for Numou access tokens")
 		}
-		if strings.TrimSpace(cfg.Security.Jwt.Issuer) == "" || strings.TrimSpace(cfg.Security.Jwt.Audience) == "" {
+		if strings.TrimSpace(jwtCfg.Issuer) == "" || strings.TrimSpace(jwtCfg.Audience) == "" {
 			return errors.NewValidationError("security.jwt.issuer/audience", "issuer and audience are required for Numou access tokens")
+		}
+		if hasJWKS {
+			issuerURL, issuerErr := url.Parse(strings.TrimSpace(jwtCfg.Issuer))
+			jwksURL, jwksErr := url.Parse(strings.TrimSpace(jwtCfg.JWKSURL))
+			if issuerErr != nil || issuerURL.Scheme != "https" || issuerURL.Host == "" ||
+				jwksErr != nil || jwksURL.Scheme != "https" || jwksURL.Host == "" ||
+				jwksURL.User != nil || jwksURL.Fragment != "" || !strings.EqualFold(issuerURL.Host, jwksURL.Host) {
+				return errors.NewValidationError("security.jwt.jwksUrl", "JWKS URL must be HTTPS on the configured Identity issuer host")
+			}
+			cacheTTL, cacheErr := time.ParseDuration(jwtCfg.JWKSCacheTTL)
+			staleTTL, staleErr := time.ParseDuration(jwtCfg.JWKSStaleTTL)
+			refreshTimeout, timeoutErr := time.ParseDuration(jwtCfg.JWKSRefreshTimeout)
+			if cacheErr != nil || cacheTTL < 30*time.Second || cacheTTL > time.Hour {
+				return errors.NewValidationError("security.jwt.jwksCacheTTL", "JWKS cache TTL must be between 30s and 1h")
+			}
+			if staleErr != nil || staleTTL < cacheTTL || staleTTL > time.Hour {
+				return errors.NewValidationError("security.jwt.jwksStaleTTL", "JWKS stale TTL must be at least the cache TTL and no more than 1h")
+			}
+			if timeoutErr != nil || refreshTimeout <= 0 || refreshTimeout > 10*time.Second {
+				return errors.NewValidationError("security.jwt.jwksRefreshTimeout", "JWKS refresh timeout must be positive and no more than 10s")
+			}
+			if jwtCfg.JWKSMaxKeys < 1 || jwtCfg.JWKSMaxKeys > 32 {
+				return errors.NewValidationError("security.jwt.jwksMaxKeys", "JWKS max keys must be between 1 and 32")
+			}
 		}
 		if len(cfg.Security.Jwt.Algorithms) != 1 || cfg.Security.Jwt.Algorithms[0] != "RS256" {
 			return errors.NewValidationError("security.jwt.algorithms", "Numou access tokens require RS256 only")
