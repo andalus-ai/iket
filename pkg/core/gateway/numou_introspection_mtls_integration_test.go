@@ -28,7 +28,7 @@ import (
 // certificate, issues a workload token, then checks that token separately
 // from the application access token being introspected.
 func TestNumouIdentityMTLSClientCredentialsAndIntrospectionEndToEnd(t *testing.T) {
-	clientCA, clientCAKey, clientCertPEM, clientKeyPEM := testClientCertificate(t)
+	clientCA, clientCertPEM, clientKeyPEM := testClientCertificate(t)
 	clientCAPool := x509.NewCertPool()
 	clientCAPool.AddCert(clientCA)
 
@@ -126,10 +126,9 @@ func TestNumouIdentityMTLSClientCredentialsAndIntrospectionEndToEnd(t *testing.T
 	if tokenCalls.Load() != 1 || introspectionCalls.Load() != 1 {
 		t.Fatalf("expected cached validation, got token=%d introspection=%d", tokenCalls.Load(), introspectionCalls.Load())
 	}
-	_ = clientCAKey
 }
 
-func testClientCertificate(t *testing.T) (*x509.Certificate, *rsa.PrivateKey, []byte, []byte) {
+func testClientCertificate(t *testing.T) (*x509.Certificate, []byte, []byte) {
 	t.Helper()
 	caKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil { t.Fatal(err) }
@@ -155,7 +154,7 @@ func testClientCertificate(t *testing.T) (*x509.Certificate, *rsa.PrivateKey, []
 	clientDER, err := x509.CreateCertificate(rand.Reader, clientTemplate, caCert, &clientKey.PublicKey, caKey)
 	if err != nil { t.Fatal(err) }
 	clientKeyDER := x509.MarshalPKCS1PrivateKey(clientKey)
-	return caCert, caKey,
+	return caCert,
 		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: clientDER}),
 		pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: clientKeyDER})
 }
@@ -163,7 +162,7 @@ func testClientCertificate(t *testing.T) (*x509.Certificate, *rsa.PrivateKey, []
 // Keep the helper's PEM output strict and make accidental empty material fail
 // close before the integration fixture is started.
 func TestNumouTestClientCertificateMaterialIsPEM(t *testing.T) {
-	_, _, certPEM, keyPEM := testClientCertificate(t)
+	_, certPEM, keyPEM := testClientCertificate(t)
 	if !strings.Contains(string(certPEM), "BEGIN CERTIFICATE") || !strings.Contains(string(keyPEM), "BEGIN RSA PRIVATE KEY") {
 		t.Fatal("test client certificate material is not PEM encoded")
 	}
