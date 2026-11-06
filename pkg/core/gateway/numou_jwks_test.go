@@ -55,13 +55,14 @@ func TestNumouJWKSResolverRotatesSigningKeysByKID(t *testing.T) {
 func TestNumouJWKSResolverUsesStaleKnownKeyOnlyWithinBound(t *testing.T) {
 	key := mustGenerateJWKSKey(t)
 	var unavailable atomic.Bool
+	body := mustJWKSJSON(t, jwkForTest("active", &key.PublicKey))
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if unavailable.Load() {
 			http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(mustJWKSJSON(t, jwkForTest("active", &key.PublicKey)))
+		_, _ = w.Write(body)
 	}))
 	defer server.Close()
 
@@ -90,10 +91,11 @@ func TestNumouJWKSResolverUsesStaleKnownKeyOnlyWithinBound(t *testing.T) {
 func TestNumouJWKSResolverBoundsUnknownKIDRefreshes(t *testing.T) {
 	key := mustGenerateJWKSKey(t)
 	var requests atomic.Int32
+	body := mustJWKSJSON(t, jwkForTest("known", &key.PublicKey))
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(mustJWKSJSON(t, jwkForTest("known", &key.PublicKey)))
+		_, _ = w.Write(body)
 	}))
 	defer server.Close()
 
