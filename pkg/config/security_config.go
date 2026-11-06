@@ -412,6 +412,7 @@ type JWTConfig struct {
 	Issuer               string   `yaml:"issuer,omitempty"`
 	Audience             string   `yaml:"audience,omitempty"`
 	JWKSURL              string   `yaml:"jwksUrl,omitempty"`
+	JWKSCAFile           string   `yaml:"jwksCAFile,omitempty"`
 	JWKSCacheTTL         string   `yaml:"jwksCacheTTL,omitempty"`
 	JWKSStaleTTL         string   `yaml:"jwksStaleTTL,omitempty"`
 	JWKSRefreshTimeout   string   `yaml:"jwksRefreshTimeout,omitempty"`
