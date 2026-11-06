@@ -262,11 +262,3 @@ func (r *numouJWKSResolver) refreshLocked(ctx context.Context) error {
 	return nil
 }
 
-func contains(values []string, expected string) bool {
-	for _, value := range values {
-		if value == expected {
-			return true
-		}
-	}
-	return false
-}
