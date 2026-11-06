@@ -159,7 +159,6 @@ func (r *numouJWKSResolver) refreshLocked(ctx context.Context) error {
 	}
 	var doc jwksDocument
 	decoder := json.NewDecoder(strings.NewReader(string(body)))
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&doc); err != nil {
 		return errJWKSUnavailable
 	}
