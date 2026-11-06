@@ -39,6 +39,15 @@ type jwk struct {
 	KeyID    string `json:"kid"`
 	Modulus  string `json:"n"`
 	Exponent string `json:"e"`
+	KeyOps   []string `json:"key_ops,omitempty"`
+	D        string   `json:"d,omitempty"`
+	P        string   `json:"p,omitempty"`
+	Q        string   `json:"q,omitempty"`
+	DP       string   `json:"dp,omitempty"`
+	DQ       string   `json:"dq,omitempty"`
+	QI       string   `json:"qi,omitempty"`
+	K        string   `json:"k,omitempty"`
+	Oth      []json.RawMessage `json:"oth,omitempty"`
 }
 
 type numouJWKSResolver struct {
@@ -138,12 +147,17 @@ func (r *numouJWKSResolver) key(ctx context.Context, kid string) (*rsa.PublicKey
 	shouldRefresh := !fresh
 	if cached == nil {
 		shouldRefresh = r.lastAttempt.IsZero() || now.Sub(r.lastAttempt) >= minJWKSRefreshInterval
+	} else if shouldRefresh && !r.lastAttempt.IsZero() && now.Sub(r.lastAttempt) < minJWKSRefreshInterval {
+		if now.Before(r.staleUntil) {
+			return cached, nil
+		}
+		return nil, errJWKSUnavailable
 	}
 	if shouldRefresh {
 		r.lastAttempt = now
 		if err := r.refreshLocked(ctx); err != nil {
 			r.lastFailure = true
-			if cached != nil && now.Before(r.staleUntil) {
+			if cached != nil && r.now().Before(r.staleUntil) {
 				return cached, nil
 			}
 			return nil, err
@@ -195,10 +209,17 @@ func (r *numouJWKSResolver) refreshLocked(ctx context.Context) error {
 	}
 	next := make(map[string]*rsa.PublicKey, len(doc.Keys))
 	for _, item := range doc.Keys {
+		if item.D != "" || item.P != "" || item.Q != "" || item.DP != "" ||
+			item.DQ != "" || item.QI != "" || item.K != "" || len(item.Oth) > 0 {
+			return errJWKSUnavailable
+		}
 		if item.Use != "" && item.Use != "sig" {
 			continue
 		}
 		if item.Alg != "" && item.Alg != "RS256" {
+			continue
+		}
+		if len(item.KeyOps) > 0 && !contains(item.KeyOps, "verify") {
 			continue
 		}
 		if item.KeyType != "RSA" {
@@ -239,4 +260,13 @@ func (r *numouJWKSResolver) refreshLocked(ctx context.Context) error {
 	r.expiresAt = now.Add(r.cacheTTL)
 	r.staleUntil = now.Add(r.staleTTL)
 	return nil
+}
+
+func contains(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }
