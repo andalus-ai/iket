@@ -23,8 +23,9 @@ type Factory func(logger *logging.Logger, config map[string]interface{}) (engine
 // Registry manages plugin factories and instances
 type Registry struct {
 	factories map[string]Factory
-	plugins   map[string]engine.PhasePlugin
-	logger    *logging.Logger
+	plugins                 map[string]engine.PhasePlugin
+	clientUsageObserverWires map[string]map[string]struct{}
+	logger                  *logging.Logger
 	mu        sync.RWMutex
 }
 
