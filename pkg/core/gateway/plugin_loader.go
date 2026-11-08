@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/bhangun/iket/pkg/logging"
-	"github.com/bhangun/iket/pkg/plugin"
+	"github.com/bhangun/iket/pkg/core/engine"
 	_ "github.com/bhangun/iket/pkg/plugin/apikey"
 	_ "github.com/bhangun/iket/pkg/plugin/jwt"
 
@@ -36,7 +36,7 @@ func (g *Gateway) loadPlugins() error {
 			g.logger.Warn("Plugin missing 'Plugin' symbol", logging.String("file", file.Name()), logging.Error(err))
 			continue
 		}
-		p, ok := sym.(plugin.Plugin)
+		p, ok := sym.(engine.PhasePlugin)
 		if !ok {
 			g.logger.Warn("Plugin symbol does not implement Plugin interface", logging.String("file", file.Name()))
 			continue
