@@ -309,3 +309,15 @@ func InitializeDefaultRegistry(logger *logging.Logger) error {
 	DefaultRegistry = NewRegistry(logger)
 	return DefaultRegistry.RegisterAllBuiltins()
 }
+
+// Register adds an already constructed phase plugin to the registry.
+func (r *Registry) Register(p engine.PhasePlugin) error {
+	if p == nil { return fmt.Errorf("plugin is nil") }
+	name := p.Name()
+	if name == "" { return fmt.Errorf("plugin name is empty") }
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.plugins[name]; exists { return fmt.Errorf("plugin already registered: %s", name) }
+	r.plugins[name] = p
+	return nil
+}
