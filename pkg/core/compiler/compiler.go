@@ -223,7 +223,7 @@ func (c *Compiler) compileRoute(service provider.Service, route provider.RouterC
 			"tags":    service.Tags,
 		},
 		Priority: route.Priority,
-		Enabled:  !route.Enabled, // Note: config uses Enabled=false to disable
+		Enabled:  route.Enabled == nil || *route.Enabled, // nil defaults to enabled
 	}, nil
 }
 
