@@ -26,6 +26,10 @@ type Collector struct {
 	// Gateway metrics
 	activeConnections prometheus.Gauge
 	configReloads     prometheus.Counter
+
+	// Authentication dependency metrics; labels are bounded outcome classes only.
+	numouIntrospectionTotal    *prometheus.CounterVec
+	numouIntrospectionDuration *prometheus.HistogramVec
 }
 
 // NewCollector creates a new metrics collector
@@ -62,6 +66,8 @@ func NewCollector() *Collector {
 				Help: "Current number of active connections",
 			},
 		),
+		numouIntrospectionTotal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "gateway_numou_introspection_total", Help: "Numou token introspection outcomes"}, []string{"outcome"}),
+		numouIntrospectionDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "gateway_numou_introspection_duration_seconds", Help: "Numou token introspection request duration", Buckets: prometheus.DefBuckets}, []string{"outcome"}),
 		configReloads: prometheus.NewCounter(
 			prometheus.CounterOpts{
 				Name: "gateway_config_reloads_total",
@@ -93,6 +99,8 @@ func NewCollector() *Collector {
 		collector.httpRequestsInFlight,
 		collector.activeConnections,
 		collector.configReloads,
+		collector.numouIntrospectionTotal,
+		collector.numouIntrospectionDuration,
 		collector.phaseDuration,
 		collector.pluginDuration,
 	)
@@ -138,4 +146,12 @@ func (c *Collector) SetActiveConnections(count float64) {
 // IncrementConfigReloads increments the config reload counter
 func (c *Collector) IncrementConfigReloads() {
 	c.configReloads.Inc()
+}
+
+// RecordNumouIntrospection records a bounded outcome and elapsed duration.
+// Outcomes must be one of active, inactive, or error; token and identity labels are intentionally excluded.
+func (c *Collector) RecordNumouIntrospection(outcome string, duration time.Duration) {
+	if outcome != "active" && outcome != "inactive" && outcome != "error" { outcome = "error" }
+	c.numouIntrospectionTotal.WithLabelValues(outcome).Inc()
+	c.numouIntrospectionDuration.WithLabelValues(outcome).Observe(duration.Seconds())
 }
