@@ -97,9 +97,5 @@ func (api *ManagementAPI) getGatewayMetrics(w http.ResponseWriter, r *http.Reque
 }
 
 func (api *ManagementAPI) getGatewayBackends(w http.ResponseWriter, r *http.Request) {
-	backends := api.gateway.BackendStatuses()
-	api.writeJSON(w, map[string]interface{}{
-		"backends": backends,
-		"total":    len(backends),
-	})
+	http.Error(w, "backend status reporting is not available in the phase-based runtime", http.StatusNotImplemented)
 }

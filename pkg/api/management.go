@@ -29,21 +29,25 @@ type ManagementAPI struct {
 	apiKeyGenerator      APIKeyGenerator
 	clientLifecycleHooks []ClientLifecycleHook
 	queueDigestNotifyMu  sync.Mutex
-	lastReload            time.Time
+	slaBreachEscalationState map[string]proposalQueueSLABreachEscalationState
+	lastReload time.Time
+	startedAt time.Time
 }
 
 // NewManagementAPI creates a new management API instance.
 func NewManagementAPI(gateway *runtime.Gateway, logger *logging.Logger, registry *plugin.Registry) *ManagementAPI {
 	api := &ManagementAPI{
-		gateway:             gateway,
-		logger:              logger,
-		registry:             registry,
-		upgrader:             websocket.Upgrader{},
-		statusSubscribers:    make(map[*websocket.Conn]bool),
-		metricsSubscribers:   make(map[*websocket.Conn]bool),
-		logsSubscribers:      make(map[*websocket.Conn]bool),
-		apiKeyGenerator:      CryptoRandAPIKeyGenerator{},
-		clientLifecycleHooks: []ClientLifecycleHook{noopClientLifecycleHook{}},
+		gateway:                   gateway,
+		logger:                    logger,
+		registry:                  registry,
+		upgrader:                  websocket.Upgrader{},
+		statusSubscribers:         make(map[*websocket.Conn]bool),
+		metricsSubscribers:        make(map[*websocket.Conn]bool),
+		logsSubscribers:           make(map[*websocket.Conn]bool),
+		apiKeyGenerator:            CryptoRandAPIKeyGenerator{},
+		clientLifecycleHooks:      []ClientLifecycleHook{noopClientLifecycleHook{}},
+		slaBreachEscalationState: make(map[string]proposalQueueSLABreachEscalationState),
+		startedAt: time.Now(),
 	}
 
 	go api.broadcastStatusUpdates()
