@@ -578,14 +578,15 @@ func (rw *responseWriter) WriteHeader(code int) {
 	rw.ResponseWriter.WriteHeader(code)
 }
 
-// ReloadConfig reloads provider configuration and applies it through the
-// compiler before publishing the new compiled snapshot. A failed compile leaves
-// the currently serving compiled configuration untouched.
+// ReloadConfig reloads provider configuration as an unpublished candidate.
+// The active provider snapshot is updated only after compilation and application
+// succeed, so a rejected candidate cannot make management reads disagree with
+// the configuration currently serving traffic.
 func (g *Gateway) ReloadConfig() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	snapshot, err := g.configManager.Load(ctx)
+	snapshot, err := g.configManager.LoadCandidate(ctx)
 	if err != nil {
 		return fmt.Errorf("load configuration providers: %w", err)
 	}
@@ -595,6 +596,7 @@ func (g *Gateway) ReloadConfig() error {
 	if err := g.handleConfigChange(snapshot); err != nil {
 		return fmt.Errorf("apply reloaded configuration: %w", err)
 	}
+	g.configManager.SetCurrent(snapshot)
 	return nil
 }
 
