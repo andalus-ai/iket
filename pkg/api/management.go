@@ -690,11 +690,6 @@ func (api *ManagementAPI) deleteCertificate(w http.ResponseWriter, r *http.Reque
 
 // Helper methods
 
-) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(data)
-}
-
 func (api *ManagementAPI) getServices(w http.ResponseWriter, r *http.Request) {
 	cfg := api.gateway.GetConfig()
 	if cfg == nil {
