@@ -2,6 +2,7 @@ package api
 
 import (
 	"sync"
+	"time"
 
 	"github.com/bhangun/iket/pkg/config"
 	"github.com/bhangun/iket/pkg/core/runtime"
@@ -24,18 +25,25 @@ type ManagementAPI struct {
 	metricsSubscribers map[*websocket.Conn]bool
 	logsSubscribers    map[*websocket.Conn]bool
 	subscriberMu       sync.RWMutex
+
+	apiKeyGenerator      APIKeyGenerator
+	clientLifecycleHooks []ClientLifecycleHook
+	queueDigestNotifyMu  sync.Mutex
+	lastReload            time.Time
 }
 
 // NewManagementAPI creates a new management API instance.
 func NewManagementAPI(gateway *runtime.Gateway, logger *logging.Logger, registry *plugin.Registry) *ManagementAPI {
 	api := &ManagementAPI{
-		gateway:            gateway,
-		logger:             logger,
-		registry:            registry,
-		upgrader:            websocket.Upgrader{},
-		statusSubscribers:   make(map[*websocket.Conn]bool),
-		metricsSubscribers:  make(map[*websocket.Conn]bool),
-		logsSubscribers:     make(map[*websocket.Conn]bool),
+		gateway:             gateway,
+		logger:              logger,
+		registry:             registry,
+		upgrader:             websocket.Upgrader{},
+		statusSubscribers:    make(map[*websocket.Conn]bool),
+		metricsSubscribers:   make(map[*websocket.Conn]bool),
+		logsSubscribers:      make(map[*websocket.Conn]bool),
+		apiKeyGenerator:      CryptoRandAPIKeyGenerator{},
+		clientLifecycleHooks: []ClientLifecycleHook{noopClientLifecycleHook{}},
 	}
 
 	go api.broadcastStatusUpdates()
