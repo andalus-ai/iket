@@ -8,6 +8,8 @@ import (
 	"github.com/bhangun/iket/pkg/logging"
 )
 
+const defaultProposalCanaryAutoReconcileInterval = 30 * time.Second
+
 func proposalCanaryAutoInterval(record *configProposalRecord) time.Duration {
 	if record == nil || !record.CanaryAutoReconcile {
 		return 0
