@@ -97,7 +97,7 @@ func NewGateway(deps Dependencies, version string) (*Gateway, error) {
 		pluginRegistry: deps.Registry,
 	}
 	if gateway.pluginRegistry == nil {
-		gateway.pluginRegistry = plugin.NewRegistry(g.logger)
+		gateway.pluginRegistry = plugin.NewRegistry(gateway.logger)
 	}
 
 	return gateway, nil
