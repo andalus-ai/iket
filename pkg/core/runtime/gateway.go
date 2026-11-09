@@ -597,3 +597,9 @@ func (g *Gateway) ReloadConfig() error {
 	}
 	return nil
 }
+
+
+// Version returns the runtime gateway version reported at construction.
+func (g *Gateway) Version() string {
+	return g.version
+}
