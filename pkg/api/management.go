@@ -31,6 +31,7 @@ type ManagementAPI struct {
 	queueDigestNotifyMu  sync.Mutex
 	slaBreachEscalationState map[string]proposalQueueSLABreachEscalationState
 	lastReload time.Time
+	startedAt time.Time
 }
 
 // NewManagementAPI creates a new management API instance.
@@ -46,6 +47,7 @@ func NewManagementAPI(gateway *runtime.Gateway, logger *logging.Logger, registry
 		apiKeyGenerator:            CryptoRandAPIKeyGenerator{},
 		clientLifecycleHooks:      []ClientLifecycleHook{noopClientLifecycleHook{}},
 		slaBreachEscalationState: make(map[string]proposalQueueSLABreachEscalationState),
+		startedAt: time.Now(),
 	}
 
 	go api.broadcastStatusUpdates()
