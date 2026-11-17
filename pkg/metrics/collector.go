@@ -26,6 +26,11 @@ type Collector struct {
 	// Gateway metrics
 	activeConnections prometheus.Gauge
 	configReloads     prometheus.Counter
+	// Authentication dependency metrics; labels are bounded outcome classes only.
+	introspectionTotal    *prometheus.CounterVec
+	introspectionDuration *prometheus.HistogramVec
+	bffStepTotal *prometheus.CounterVec
+	bffStepDuration *prometheus.HistogramVec
 }
 
 // NewCollector creates a new metrics collector
@@ -62,6 +67,10 @@ func NewCollector() *Collector {
 				Help: "Current number of active connections",
 			},
 		),
+		introspectionTotal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "gateway_introspection_total", Help: "Token introspection outcomes"}, []string{"outcome"}),
+		introspectionDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "gateway_introspection_duration_seconds", Help: "Token introspection request duration", Buckets: prometheus.DefBuckets}, []string{"outcome"}),
+		bffStepTotal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "gateway_bff_step_total", Help: "BFF step execution outcomes"}, []string{"route", "step", "status", "required", "outcome"}),
+		bffStepDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "gateway_bff_step_duration_seconds", Help: "BFF step execution duration", Buckets: prometheus.DefBuckets}, []string{"route", "step", "outcome"}),
 		configReloads: prometheus.NewCounter(
 			prometheus.CounterOpts{
 				Name: "gateway_config_reloads_total",
@@ -93,6 +102,10 @@ func NewCollector() *Collector {
 		collector.httpRequestsInFlight,
 		collector.activeConnections,
 		collector.configReloads,
+		collector.introspectionTotal,
+		collector.introspectionDuration,
+		collector.bffStepTotal,
+		collector.bffStepDuration,
 		collector.phaseDuration,
 		collector.pluginDuration,
 	)
@@ -138,4 +151,13 @@ func (c *Collector) SetActiveConnections(count float64) {
 // IncrementConfigReloads increments the config reload counter
 func (c *Collector) IncrementConfigReloads() {
 	c.configReloads.Inc()
+}
+
+// RecordBFFStep records bounded BFF step execution telemetry.
+func (c *Collector) RecordBFFStep(route, step string, status int, required bool, outcome string, durationSeconds float64) {
+	if outcome == "" { outcome = "unknown" }
+	if len(route) > 128 { route = route[:128] }
+	if len(step) > 64 { step = step[:64] }
+	c.bffStepTotal.WithLabelValues(route, step, fmt.Sprintf("%d", status), fmt.Sprintf("%t", required), outcome).Inc()
+	c.bffStepDuration.WithLabelValues(route, step, outcome).Observe(durationSeconds)
 }

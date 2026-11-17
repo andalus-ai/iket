@@ -9,7 +9,7 @@
 
 ## Required configuration
 
-Enable the gateway JWT middleware and configure a dedicated Numou RS256 public key:
+Enable the gateway JWT middleware and configure either a dedicated static Numou RS256 public key or the Identity JWKS endpoint. For production rotation, prefer JWKS:
 
 \`\`\`yaml
 security:
@@ -25,7 +25,7 @@ security:
 
 Do not configure the Numou public key as an HMAC secret. Do not enable HS256 fallback for this trust profile. The private key remains in Numou Identity's secret-management boundary and must never be copied to Iket.
 
-The gateway configuration validator rejects the Numou profile if JWT is disabled, the public key is missing, issuer/audience is missing, or the configured algorithm list is not exactly RS256.
+The gateway configuration validator rejects the Numou profile if JWT is disabled, both or neither key source is configured, issuer/audience is missing, or the configured algorithm list is not exactly RS256. A JWKS URL must use HTTPS on the configured Identity issuer host.
 
 ## Required claims
 
@@ -91,9 +91,38 @@ A positive cache means revocation is observed within the configured positive TTL
 
 If online introspection is disabled, the gateway uses local JWT validation only and tokens remain usable until expiry after revocation/rotation.
 
-## Key rotation
+## JWKS key rotation and outage behavior
 
-The deployment must distribute the new public key to Iket before Numou begins signing with it. During a planned overlap, Iket needs a trusted key-selection mechanism (for example, a configured key set keyed by JWT \`kid\`) before multiple keys are used. This single-key profile must not silently accept unknown keys or fall back to HMAC.
+For production key rotation, configure the Numou Identity JWKS endpoint instead of a single PEM file. Iket selects the RSA signing key by the JWT header's `kid`; RS256 remains the only accepted algorithm. The JWKS endpoint must be HTTPS and share the configured Identity issuer host. Iket does not follow redirects and does not fall back to HS256 or an untrusted key source.
+
+Example:
+
+```yaml
+security:
+  jwt:
+    enabled: true
+    numouAccessTokens: true
+    algorithms: [RS256]
+    jwksUrl: https://identity.numou.internal/.well-known/jwks.json
+    jwksCAFile: /run/secrets/identity-ca.pem # optional when Identity uses a private CA
+    jwksCacheTTL: 5m
+    jwksStaleTTL: 15m
+    jwksRefreshTimeout: 2s
+    jwksMaxKeys: 16
+    issuer: https://identity.numou.internal
+    audience: numou-iket
+```
+
+Operational behavior:
+
+- A successful JWKS response is cached for the configured cache TTL. The response is capped at 64 KiB and the accepted key count is bounded (1–32).
+- A token with an unknown `kid` triggers an early refresh even while the current set is fresh. Unknown-key refreshes are serialized and rate-limited to one attempt per five seconds to prevent attacker-controlled network amplification.
+- After cache expiry, a known key may be used during an Identity outage only until the configured stale TTL measured from the last successful refresh. Once that bound expires, verification fails closed with HTTP 503.
+- An unknown `kid` after a successful refresh is rejected with HTTP 401. If the JWKS source is unavailable and no still-trusted cached key can be used, Iket returns HTTP 503 rather than treating an infrastructure failure as proof of an invalid token.
+- A successful refresh replaces the active key set. Keys removed from the published set are no longer accepted after that refresh. Keep old and new signing keys published together during the overlap period, publish the new key before signing with it, and remove the old key only after its maximum token lifetime and rollout overlap have elapsed.
+- JWKS removal controls signature trust; it does not provide immediate per-credential revocation. Keep online introspection enabled when revocation and credential-state checks are required.
+
+The optional jwksCAFile pins a deployment-provided CA bundle for private Identity PKI; when omitted, Iket uses the operating-system trust roots. The static PEM mode remains supported for legacy deployments, but it has no automatic rotation and must be updated out-of-band before a new key signs tokens.
 
 ## Verification boundary
 

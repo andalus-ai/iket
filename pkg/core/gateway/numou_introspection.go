@@ -63,6 +63,7 @@ type numouIntrospector struct {
 	cache            map[string]introspectionCacheEntry
 	flights          map[string]*introspectionFlight
 	now              func() time.Time
+	recordObservation func(outcome string, duration time.Duration)
 }
 
 func newNumouIntrospector(cfg config.NumouIntrospectionConfig) (*numouIntrospector, error) {
@@ -132,7 +133,13 @@ func (i *numouIntrospector) validate(ctx context.Context, rawToken string, claim
 	i.flights[key] = flight
 	i.mu.Unlock()
 
+	started := i.now()
 	active, err := i.request(ctx, rawToken, claims)
+	if i.recordObservation != nil {
+		outcome := "active"
+		if err != nil { outcome = "error"; if errors.Is(err, errNumouTokenInactive) { outcome = "inactive" } } else if !active { outcome = "inactive" }
+		i.recordObservation(outcome, i.now().Sub(started))
+	}
 	i.mu.Lock()
 	if err == nil {
 		ttl := i.negativeTTL

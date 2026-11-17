@@ -577,3 +577,31 @@ func (rw *responseWriter) WriteHeader(code int) {
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
 }
+
+// ReloadConfig reloads provider configuration as an unpublished candidate.
+// The active provider snapshot is updated only after compilation and application
+// succeed, so a rejected candidate cannot make management reads disagree with
+// the configuration currently serving traffic.
+func (g *Gateway) ReloadConfig() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	snapshot, err := g.configManager.LoadCandidate(ctx)
+	if err != nil {
+		return fmt.Errorf("load configuration providers: %w", err)
+	}
+	if snapshot == nil {
+		return fmt.Errorf("configuration providers returned an empty snapshot")
+	}
+	if err := g.handleConfigChange(snapshot); err != nil {
+		return fmt.Errorf("apply reloaded configuration: %w", err)
+	}
+	g.configManager.SetCurrent(snapshot)
+	return nil
+}
+
+
+// Version returns the runtime gateway version reported at construction.
+func (g *Gateway) Version() string {
+	return g.version
+}
