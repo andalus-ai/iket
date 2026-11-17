@@ -22,6 +22,7 @@ func (g *Gateway) jwtAuthMiddleware(cfg config.JWTConfig) func(http.Handler) htt
 	var introspectionInitErr error
 	if cfg.NumouAccessTokens && cfg.Introspection.Enabled {
 		introspector, introspectionInitErr = newNumouIntrospector(cfg.Introspection)
+		if introspector != nil && g.metrics != nil { introspector.recordObservation = g.metrics.RecordNumouIntrospection }
 		if introspectionInitErr != nil {
 			g.logger.Warn("Numou online introspection initialization failed", logging.Error(introspectionInitErr))
 		}

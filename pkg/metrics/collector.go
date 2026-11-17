@@ -26,6 +26,9 @@ type Collector struct {
 	// Gateway metrics
 	activeConnections prometheus.Gauge
 	configReloads     prometheus.Counter
+	// Authentication dependency metrics; labels are bounded outcome classes only.
+	introspectionTotal    *prometheus.CounterVec
+	introspectionDuration *prometheus.HistogramVec
 	bffStepTotal *prometheus.CounterVec
 	bffStepDuration *prometheus.HistogramVec
 }
@@ -64,6 +67,8 @@ func NewCollector() *Collector {
 				Help: "Current number of active connections",
 			},
 		),
+		introspectionTotal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "gateway_introspection_total", Help: "Token introspection outcomes"}, []string{"outcome"}),
+		introspectionDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "gateway_introspection_duration_seconds", Help: "Token introspection request duration", Buckets: prometheus.DefBuckets}, []string{"outcome"}),
 		bffStepTotal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "gateway_bff_step_total", Help: "BFF step execution outcomes"}, []string{"route", "step", "status", "required", "outcome"}),
 		bffStepDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "gateway_bff_step_duration_seconds", Help: "BFF step execution duration", Buckets: prometheus.DefBuckets}, []string{"route", "step", "outcome"}),
 		configReloads: prometheus.NewCounter(
@@ -97,6 +102,8 @@ func NewCollector() *Collector {
 		collector.httpRequestsInFlight,
 		collector.activeConnections,
 		collector.configReloads,
+		collector.introspectionTotal,
+		collector.introspectionDuration,
 		collector.bffStepTotal,
 		collector.bffStepDuration,
 		collector.phaseDuration,
