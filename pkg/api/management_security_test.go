@@ -70,6 +70,25 @@ func TestManagementSecurityMiddleware(t *testing.T) {
 	})
 }
 
+func TestManagementSecurityMiddlewareFailsClosedWithEmptyBootstrapPassword(t *testing.T) {
+	api := &ManagementAPI{}
+	api.SetSecurityConfig(config.SecurityConfig{
+		EnableBasicAuth: true,
+		BasicAuthUsers: map[string]string{"admin": ""},
+	})
+	handler := api.managementSecurityMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("empty bootstrap password must never authenticate")
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/gateway/status", nil)
+	req.TLS = &tls.ConnectionState{VerifiedChains: [][]*x509.Certificate{{{}}}}
+	req.SetBasicAuth("admin", "")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 for empty bootstrap password, got %d", rec.Code)
+	}
+}
+
 func TestManagementSecurityMiddlewareFailsClosedWithoutConfiguration(t *testing.T) {
 	api := &ManagementAPI{}
 	handler := api.managementSecurityMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
