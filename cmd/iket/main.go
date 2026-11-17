@@ -62,12 +62,12 @@ security:
     generateSharedClient: false
   enableBasicAuth: true
   basicAuthUsers:
-    admin: admin123
+    admin: "${IKET_ADMIN_PASSWORD}"
   clients:
-    my-client-id: my-secret
+    my-client-id: "${IKET_CLIENT_SECRET}"
   jwt:
     enabled: false
-    secret: "changeme"
+    secret: "${IKET_JWT_SECRET}"
     algorithms: ["HS256"]
     publicKeyFile: ""
     required: false
@@ -77,7 +77,7 @@ storage:
 
 plugins:
   auth:
-    api_key: "your-secret-api-key-here"
+    api_key: "${IKET_API_KEY}"
   openapi:
     spec_path: "openapi.yaml"
     enabled: true
@@ -107,12 +107,12 @@ security:
     generateSharedClient: false
   enableBasicAuth: true
   basicAuthUsers:
-    admin: admin123
+    admin: "${IKET_ADMIN_PASSWORD}"
   clients:
-    my-client-id: my-secret
+    my-client-id: "${IKET_CLIENT_SECRET}"
   jwt:
     enabled: false
-    secret: "changeme"
+    secret: "${IKET_JWT_SECRET}"
     algorithms: ["HS256"]
     publicKeyFile: ""
     required: false
@@ -124,7 +124,7 @@ storage:
 
 plugins:
   auth:
-    api_key: "your-secret-api-key-here"
+    api_key: "${IKET_API_KEY}"
   openapi:
     spec_path: "openapi.yaml"
     enabled: true
@@ -172,6 +172,10 @@ services:
     environment:
       - TZ=${TZ:-UTC}
       - IKET_CERTS_DIR=/app/certs
+      - IKET_ADMIN_PASSWORD=${IKET_ADMIN_PASSWORD:?Set IKET_ADMIN_PASSWORD before starting}
+      - IKET_CLIENT_SECRET=${IKET_CLIENT_SECRET:?Set IKET_CLIENT_SECRET before starting}
+      - IKET_API_KEY=${IKET_API_KEY:?Set IKET_API_KEY before starting}
+      - IKET_JWT_SECRET=${IKET_JWT_SECRET:-}
     command: ["--config", "/app/config/config.yaml", "--services", "/app/config/service.yaml"]
     volumes:
       - ./config:/app/config:ro
@@ -386,9 +390,7 @@ func main() {
 		fmt.Println()
 	}
 
-	printFileIfExists(*configPath, "Default Config")
-	printFileIfExists(*servicesPath, "Default Service Config")
-	printFileIfExists(inferComposePath(*configPath), "Default Docker Compose")
+	fmt.Println("Configuration scaffold files are ready. Sensitive values are not printed; inspect the files locally or use --print-config for a redacted view.")
 	if len(legacyRefreshedPaths) > 0 && !*resetDefaults {
 		fmt.Println("Refreshed legacy scaffold defaults:")
 		for _, path := range legacyRefreshedPaths {

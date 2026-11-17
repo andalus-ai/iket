@@ -28,6 +28,15 @@ func cloneBasicAuthUsers(users map[string]string) map[string]string {
 	return cloned
 }
 
+func hasConfiguredBasicAuthUser(users map[string]string) bool {
+	for username, password := range users {
+		if username != "" && password != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func (api *ManagementAPI) managementSecurityMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		api.mu.RLock()
@@ -38,7 +47,7 @@ func (api *ManagementAPI) managementSecurityMiddleware(next http.Handler) http.H
 		}
 		api.mu.RUnlock()
 
-		if security == nil || !security.EnableBasicAuth || len(security.BasicAuthUsers) == 0 {
+		if security == nil || !security.EnableBasicAuth || !hasConfiguredBasicAuthUser(security.BasicAuthUsers) {
 			http.Error(w, "management authentication is not configured", http.StatusServiceUnavailable)
 			return
 		}
