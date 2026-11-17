@@ -131,13 +131,23 @@ func (m *ConfigManager) RegisterProvider(p Provider) error {
 
 // Load retrieves and merges configuration from all providers
 func (m *ConfigManager) Load(ctx context.Context) (*ConfigSnapshot, error) {
+	merged, err := m.LoadCandidate(ctx)
+	if err != nil {
+		return nil, err
+	}
+	m.SetCurrent(merged)
+	return merged, nil
+}
+
+// LoadCandidate loads and merges provider snapshots without publishing them as
+// the active configuration. Runtime callers can compile/validate the candidate
+// first and publish it only after the runtime accepts it.
+func (m *ConfigManager) LoadCandidate(ctx context.Context) (*ConfigSnapshot, error) {
 	snapshots := make([]*ConfigSnapshot, 0)
 
-	// Load from all providers
 	for name, provider := range m.providers {
 		snapshot, err := provider.Load(ctx)
 		if err != nil {
-			// If runtime provider fails, log but continue with fallback
 			if provider.Role() == RoleRuntime {
 				m.logger.Warn("Runtime provider failed, using fallback",
 					logging.String("provider", name),
@@ -145,31 +155,30 @@ func (m *ConfigManager) Load(ctx context.Context) (*ConfigSnapshot, error) {
 				)
 				continue
 			}
-
-			// Bootstrap and fallback failures are critical
 			return nil, fmt.Errorf("provider %s load failed: %w", name, err)
 		}
-
 		snapshots = append(snapshots, snapshot)
 	}
 
-	// Merge snapshots using strategy
 	merged, err := m.strategy.Merge(snapshots)
 	if err != nil {
 		return nil, fmt.Errorf("merge failed: %w", err)
 	}
-
-	// Update current snapshot
-	m.currentMu.Lock()
-	m.current = merged
-	m.currentMu.Unlock()
-
-	m.logger.Info("Configuration loaded",
+	m.logger.Info("Configuration candidate loaded",
 		logging.String("version", merged.Version),
 		logging.Int("providers", len(snapshots)),
 	)
-
 	return merged, nil
+}
+
+// SetCurrent publishes a configuration snapshot as the manager's active view.
+func (m *ConfigManager) SetCurrent(snapshot *ConfigSnapshot) {
+	if snapshot == nil {
+		return
+	}
+	m.currentMu.Lock()
+	m.current = snapshot
+	m.currentMu.Unlock()
 }
 
 // Watch monitors all providers for changes
