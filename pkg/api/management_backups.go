@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"github.com/bhangun/iket/pkg/config"
 	coreerrors "github.com/bhangun/iket/pkg/core/errors"
-	"github.com/bhangun/iket/pkg/core/gateway"
 	"github.com/gorilla/mux"
 	"io/fs"
 	"net/http"
@@ -234,7 +233,7 @@ func listConfigBackups() ([]map[string]interface{}, error) {
 	return backups, nil
 }
 
-func restoreConfigBackup(gw *gateway.Gateway, id string) error {
+func restoreConfigBackup(gw interface { UpdateConfig(*config.Config) error }, id string) error {
 	path := filepath.Join(backupsDir(), id+".json")
 	data, err := os.ReadFile(path)
 	if err != nil {

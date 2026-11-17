@@ -26,10 +26,11 @@ type Collector struct {
 	// Gateway metrics
 	activeConnections prometheus.Gauge
 	configReloads     prometheus.Counter
-
 	// Authentication dependency metrics; labels are bounded outcome classes only.
-	numouIntrospectionTotal    *prometheus.CounterVec
-	numouIntrospectionDuration *prometheus.HistogramVec
+	introspectionTotal    *prometheus.CounterVec
+	introspectionDuration *prometheus.HistogramVec
+	bffStepTotal *prometheus.CounterVec
+	bffStepDuration *prometheus.HistogramVec
 }
 
 // NewCollector creates a new metrics collector
@@ -66,8 +67,10 @@ func NewCollector() *Collector {
 				Help: "Current number of active connections",
 			},
 		),
-		numouIntrospectionTotal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "gateway_numou_introspection_total", Help: "Numou token introspection outcomes"}, []string{"outcome"}),
-		numouIntrospectionDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "gateway_numou_introspection_duration_seconds", Help: "Numou token introspection request duration", Buckets: prometheus.DefBuckets}, []string{"outcome"}),
+		introspectionTotal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "gateway_introspection_total", Help: "Token introspection outcomes"}, []string{"outcome"}),
+		introspectionDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "gateway_introspection_duration_seconds", Help: "Token introspection request duration", Buckets: prometheus.DefBuckets}, []string{"outcome"}),
+		bffStepTotal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "gateway_bff_step_total", Help: "BFF step execution outcomes"}, []string{"route", "step", "status", "required", "outcome"}),
+		bffStepDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "gateway_bff_step_duration_seconds", Help: "BFF step execution duration", Buckets: prometheus.DefBuckets}, []string{"route", "step", "outcome"}),
 		configReloads: prometheus.NewCounter(
 			prometheus.CounterOpts{
 				Name: "gateway_config_reloads_total",
@@ -99,8 +102,10 @@ func NewCollector() *Collector {
 		collector.httpRequestsInFlight,
 		collector.activeConnections,
 		collector.configReloads,
-		collector.numouIntrospectionTotal,
-		collector.numouIntrospectionDuration,
+		collector.introspectionTotal,
+		collector.introspectionDuration,
+		collector.bffStepTotal,
+		collector.bffStepDuration,
 		collector.phaseDuration,
 		collector.pluginDuration,
 	)
@@ -148,10 +153,11 @@ func (c *Collector) IncrementConfigReloads() {
 	c.configReloads.Inc()
 }
 
-// RecordNumouIntrospection records a bounded outcome and elapsed duration.
-// Outcomes must be one of active, inactive, or error; token and identity labels are intentionally excluded.
-func (c *Collector) RecordNumouIntrospection(outcome string, duration time.Duration) {
-	if outcome != "active" && outcome != "inactive" && outcome != "error" { outcome = "error" }
-	c.numouIntrospectionTotal.WithLabelValues(outcome).Inc()
-	c.numouIntrospectionDuration.WithLabelValues(outcome).Observe(duration.Seconds())
+// RecordBFFStep records bounded BFF step execution telemetry.
+func (c *Collector) RecordBFFStep(route, step string, status int, required bool, outcome string, durationSeconds float64) {
+	if outcome == "" { outcome = "unknown" }
+	if len(route) > 128 { route = route[:128] }
+	if len(step) > 64 { step = step[:64] }
+	c.bffStepTotal.WithLabelValues(route, step, fmt.Sprintf("%d", status), fmt.Sprintf("%t", required), outcome).Inc()
+	c.bffStepDuration.WithLabelValues(route, step, outcome).Observe(durationSeconds)
 }

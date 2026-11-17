@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"fmt"
+	"net/http"
 	"sync"
 )
 
@@ -53,4 +54,9 @@ func NewRegisteredPlugin(name string, config map[string]interface{}) (Plugin, er
 		return nil, fmt.Errorf("plugin factory not found: %s", name)
 	}
 	return factory(config)
+}
+
+// MiddlewarePlugin is implemented by plugins that can wrap HTTP handlers.
+type MiddlewarePlugin interface {
+	Middleware(next http.Handler) http.Handler
 }
