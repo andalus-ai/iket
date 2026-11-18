@@ -67,8 +67,8 @@ func NewCollector() *Collector {
 				Help: "Current number of active connections",
 			},
 		),
-		introspectionTotal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "gateway_introspection_total", Help: "Token introspection outcomes"}, []string{"outcome"}),
-		introspectionDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "gateway_introspection_duration_seconds", Help: "Token introspection request duration", Buckets: prometheus.DefBuckets}, []string{"outcome"}),
+		introspectionTotal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "gateway_numou_introspection_total", Help: "Numou token introspection outcomes"}, []string{"outcome"}),
+		introspectionDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "gateway_numou_introspection_duration_seconds", Help: "Numou token introspection request duration", Buckets: prometheus.DefBuckets}, []string{"outcome"}),
 		bffStepTotal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "gateway_bff_step_total", Help: "BFF step execution outcomes"}, []string{"route", "step", "status", "required", "outcome"}),
 		bffStepDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "gateway_bff_step_duration_seconds", Help: "BFF step execution duration", Buckets: prometheus.DefBuckets}, []string{"route", "step", "outcome"}),
 		configReloads: prometheus.NewCounter(
@@ -160,4 +160,21 @@ func (c *Collector) RecordBFFStep(route, step string, status int, required bool,
 	if len(step) > 64 { step = step[:64] }
 	c.bffStepTotal.WithLabelValues(route, step, fmt.Sprintf("%d", status), fmt.Sprintf("%t", required), outcome).Inc()
 	c.bffStepDuration.WithLabelValues(route, step, outcome).Observe(durationSeconds)
+}
+
+
+// RecordNumouIntrospection records the outcome and latency of an online
+// Numou token introspection request. Only bounded outcome values are accepted
+// as labels; token, client, tenant, application and endpoint data are excluded.
+func (c *Collector) RecordNumouIntrospection(outcome string, duration time.Duration) {
+	switch outcome {
+	case "active", "inactive", "error":
+	default:
+		outcome = "error"
+	}
+	if duration < 0 {
+		duration = 0
+	}
+	c.introspectionTotal.WithLabelValues(outcome).Inc()
+	c.introspectionDuration.WithLabelValues(outcome).Observe(duration.Seconds())
 }
