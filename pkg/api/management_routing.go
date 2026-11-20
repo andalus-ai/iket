@@ -10,6 +10,8 @@ func (api *ManagementAPI) RegisterRoutes(router *mux.Router) {
 	// API v1 routes
 	v1 := router.PathPrefix("/api/v1").Subrouter()
 
+	// CORS must run before authentication so browser preflight requests can
+	// complete; every non-preflight management request remains protected.
 	// Add CORS middleware for management API
 	v1.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -25,6 +27,7 @@ func (api *ManagementAPI) RegisterRoutes(router *mux.Router) {
 			next.ServeHTTP(w, r)
 		})
 	})
+	v1.Use(api.managementSecurityMiddleware)
 
 	// Gateway management
 	v1.HandleFunc("/gateway/status", api.getGatewayStatus).Methods("GET")
