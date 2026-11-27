@@ -105,8 +105,11 @@ func writeFilesTransactionally(writes []fileWrite) error {
 			if item.existed && item.backupPath != "" {
 				if err := os.Rename(item.backupPath, item.path); err != nil {
 					if rollbackErr == nil {
-						rollbackErr = fmt.Errorf("restore destination %q: %w", item.path, err)
+						rollbackErr = fmt.Errorf("restore destination %q (backup retained at %q): %w", item.path, item.backupPath, err)
 					}
+					// Preserve the backup for operator recovery; cleanup must not
+					// delete the only remaining copy of the original configuration.
+					item.backupPath = ""
 				} else {
 					item.backupPath = ""
 				}
