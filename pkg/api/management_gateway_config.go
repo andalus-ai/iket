@@ -40,6 +40,12 @@ func (api *ManagementAPI) getGatewayConfig(w http.ResponseWriter, r *http.Reques
 		api.writeManagedError(w, managedConfigError("Failed to redact configuration", err), http.StatusInternalServerError)
 		return
 	}
+	etag, err := configETag(cfg)
+	if err != nil {
+		api.writeManagedError(w, managedConfigError("Failed to calculate configuration revision", err), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("ETag", etag)
 
 	api.writeJSON(w, redactedConfig)
 }
@@ -133,6 +139,19 @@ func (api *ManagementAPI) updateGatewayConfig(w http.ResponseWriter, r *http.Req
 		api.writeManagedError(w, managedError(coreerrors.CodeConfigNotAvailable, "Configuration not available", nil), http.StatusInternalServerError)
 		return
 	}
+	currentETag, err := configETag(currentCfg)
+	if err != nil {
+		api.writeManagedError(w, managedConfigError("Failed to calculate configuration revision", err), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("ETag", currentETag)
+	if supplied := strings.TrimSpace(r.Header.Get("If-Match")); supplied != "" && !ifMatchConfigETag(supplied, currentETag) {
+		api.writeManagedError(w, coreerrors.New(coreerrors.CodeConflict, "Configuration has changed since it was read").WithDetails(map[string]interface{}{
+			"current_revision": currentETag,
+			"expected_revision": supplied,
+		}), http.StatusConflict)
+		return
+	}
 	simCfg, err := buildGatewayConfigCandidate(currentCfg, strategy, input)
 	if err != nil {
 		if strategy == "merge" {
@@ -203,12 +222,19 @@ func (api *ManagementAPI) updateGatewayConfig(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	newETag, err := configETag(simCfg)
+	if err != nil {
+		api.writeManagedError(w, managedConfigError("Configuration updated but revision calculation failed", err), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("ETag", newETag)
 	response := APIResponse{
 		Success: true,
 		Message: fmt.Sprintf("Configuration updated successfully using %s strategy", strategy),
 		Data: map[string]interface{}{
 			"reload_required": true,
 			"summary":         summary,
+			"revision":        newETag,
 		},
 	}
 	api.writeJSON(w, response)
