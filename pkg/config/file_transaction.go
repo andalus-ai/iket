@@ -93,38 +93,6 @@ func writeFilesTransactionally(writes []fileWrite) error {
 		staged = append(staged, stagedFileWrite{path: write.path, tempPath: tempPath})
 	}
 
-	// Preserve every original before installing any new file.
-	for i := range staged {
-		item := &staged[i]
-		if _, err := os.Stat(item.path); err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			cleanup()
-			return fmt.Errorf("inspect destination %q: %w", item.path, err)
-		}
-		backup, err := os.CreateTemp(filepath.Dir(item.path), "."+filepath.Base(item.path)+".*.bak")
-		if err != nil {
-			cleanup()
-			return fmt.Errorf("prepare backup for %q: %w", item.path, err)
-		}
-		item.backupPath = backup.Name()
-		if err := backup.Close(); err != nil {
-			cleanup()
-			return fmt.Errorf("close backup placeholder for %q: %w", item.path, err)
-		}
-		if err := os.Remove(item.backupPath); err != nil {
-			cleanup()
-			return fmt.Errorf("prepare backup path for %q: %w", item.path, err)
-		}
-		if err := os.Rename(item.path, item.backupPath); err != nil {
-			item.backupPath = ""
-			cleanup()
-			return fmt.Errorf("backup destination %q: %w", item.path, err)
-		}
-		item.existed = true
-	}
-
 	rollback := func(cause error) error {
 		var rollbackErr error
 		for i := len(staged) - 1; i >= 0; i-- {
@@ -134,9 +102,11 @@ func writeFilesTransactionally(writes []fileWrite) error {
 					rollbackErr = fmt.Errorf("remove partial destination %q: %w", item.path, err)
 				}
 			}
-			if item.existed {
-				if err := os.Rename(item.backupPath, item.path); err != nil && rollbackErr == nil {
-					rollbackErr = fmt.Errorf("restore destination %q: %w", item.path, err)
+			if item.existed && item.backupPath != "" {
+				if err := os.Rename(item.backupPath, item.path); err != nil {
+					if rollbackErr == nil {
+						rollbackErr = fmt.Errorf("restore destination %q: %w", item.path, err)
+					}
 				} else {
 					item.backupPath = ""
 				}
@@ -147,6 +117,33 @@ func writeFilesTransactionally(writes []fileWrite) error {
 			return fmt.Errorf("%w (rollback also failed: %v)", cause, rollbackErr)
 		}
 		return cause
+	}
+
+	// Preserve every original before installing any new file.
+	for i := range staged {
+		item := &staged[i]
+		if _, err := os.Stat(item.path); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return rollback(fmt.Errorf("inspect destination %q: %w", item.path, err))
+		}
+		backup, err := os.CreateTemp(filepath.Dir(item.path), "."+filepath.Base(item.path)+".*.bak")
+		if err != nil {
+			return rollback(fmt.Errorf("prepare backup for %q: %w", item.path, err))
+		}
+		item.backupPath = backup.Name()
+		if err := backup.Close(); err != nil {
+			return rollback(fmt.Errorf("close backup placeholder for %q: %w", item.path, err))
+		}
+		if err := os.Remove(item.backupPath); err != nil {
+			return rollback(fmt.Errorf("prepare backup path for %q: %w", item.path, err))
+		}
+		if err := os.Rename(item.path, item.backupPath); err != nil {
+			item.backupPath = ""
+			return rollback(fmt.Errorf("backup destination %q: %w", item.path, err))
+		}
+		item.existed = true
 	}
 
 	for i := range staged {
