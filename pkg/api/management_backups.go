@@ -152,6 +152,9 @@ func (api *ManagementAPI) diffRevisions(w http.ResponseWriter, r *http.Request) 
 }
 
 func (api *ManagementAPI) restoreRevision(w http.ResponseWriter, r *http.Request) {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+
 	record, err := loadConfigRevision(mux.Vars(r)["id"])
 	if err != nil {
 		api.writeManagedError(w, err, http.StatusNotFound)
@@ -161,20 +164,63 @@ func (api *ManagementAPI) restoreRevision(w http.ResponseWriter, r *http.Request
 		api.writeManagedError(w, managedError(coreerrors.CodeRevisionConfigMissing, "Revision has no stored configuration", nil), http.StatusInternalServerError)
 		return
 	}
+	if err := record.Config.Validate(); err != nil {
+		api.writeManagedError(w, managedValidationError("Revision contains an invalid configuration", err), http.StatusBadRequest)
+		return
+	}
+	current := api.gateway.GetConfig()
+	if current == nil {
+		api.writeManagedError(w, managedError(coreerrors.CodeConfigNotAvailable, "Configuration not available", nil), http.StatusInternalServerError)
+		return
+	}
+	currentETag, err := configETag(current)
+	if err != nil {
+		api.writeManagedError(w, managedConfigError("Failed to calculate current configuration revision", err), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("ETag", currentETag)
+	if supplied := strings.TrimSpace(r.Header.Get("If-Match")); supplied != "" && !ifMatchConfigETag(supplied, currentETag) {
+		api.writeManagedError(w, coreerrors.New(coreerrors.CodeConflict, "Configuration has changed since it was read").WithDetails(map[string]interface{}{
+			"current_revision": currentETag,
+			"expected_revision": supplied,
+		}), http.StatusConflict)
+		return
+	}
+
+	label, note, changeRef := revisionMetadataFromRequest(r)
+	if err := api.enforceMutationPolicy("restore_revision", label, note, changeRef); err != nil {
+		api.writeManagedError(w, err, http.StatusBadRequest)
+		return
+	}
+	checkpointSummary := map[string]interface{}{
+		"checkpoint_before_restore": record.ID,
+		"reason":                    "pre_restore",
+	}
+	if _, err := saveConfigRevision("pre_restore_checkpoint", "Before revision restore", note, changeRef, checkpointSummary, current); err != nil {
+		api.writeManagedError(w, managedConfigError("Failed to checkpoint current configuration before restore", err), http.StatusInternalServerError)
+		return
+	}
+
 	summary := map[string]interface{}{
 		"restored_from_revision": record.ID,
 		"original_action":        record.Action,
 	}
-	label, note, changeRef := revisionMetadataFromRequest(r)
-	if err := api.applyManagedConfigChange(record.Config, "restore_revision", label, note, changeRef, summary); err != nil {
+	if err := api.applyManagedConfigChangeAfterPolicy(record.Config, "restore_revision", label, note, changeRef, summary); err != nil {
 		api.writeManagedError(w, managedConfigError("Failed to restore revision", err), http.StatusInternalServerError)
 		return
 	}
+	newETag, err := configETag(record.Config)
+	if err != nil {
+		api.writeManagedError(w, managedConfigError("Revision restored but failed to calculate its ETag", err), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("ETag", newETag)
 	api.writeJSON(w, APIResponse{
 		Success: true,
 		Message: "Revision restored successfully",
 		Data: map[string]interface{}{
 			"revision_id": record.ID,
+			"revision":    newETag,
 			"summary":     summary,
 		},
 	})
