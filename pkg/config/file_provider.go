@@ -19,6 +19,7 @@ type FileProvider struct {
 	mu           sync.RWMutex
 	stopWatcher  chan struct{}
 	closeOnce    sync.Once
+	saveMu       sync.Mutex
 }
 
 // NewFileProvider creates a new file-based configuration provider
@@ -73,22 +74,29 @@ func (p *FileProvider) Load() (*Config, error) {
 
 // Save saves configuration to files atomically
 func (p *FileProvider) Save(cfg *Config) error {
+	p.saveMu.Lock()
+	defer p.saveMu.Unlock()
+
 	if err := validateConfig(cfg); err != nil {
 		return err
 	}
 
-	// Save main config
-	if err := p.saveAtomic(p.configPath, cfg); err != nil {
-		return err
+	mainData, err := yaml.Marshal(cfg)
+	if err != nil {
+		return coreerrors.NewConfigError("failed to marshal config", err)
+	}
+	writes := []fileWrite{{path: p.configPath, data: mainData}}
+
+	if p.servicesPath != "" && p.servicesPath != p.configPath && len(cfg.Services) > 0 {
+		serviceData, err := yaml.Marshal(&cfg.Services[0])
+		if err != nil {
+			return coreerrors.NewConfigError("failed to marshal service config", err)
+		}
+		writes = append(writes, fileWrite{path: p.servicesPath, data: serviceData})
 	}
 
-	// Save service config to separate file if needed
-	if p.servicesPath != "" && p.servicesPath != p.configPath {
-		if len(cfg.Services) > 0 {
-			if err := p.saveServicesAtomic(p.servicesPath, &cfg.Services[0]); err != nil {
-				return err
-			}
-		}
+	if err := writeFilesTransactionally(writes); err != nil {
+		return coreerrors.NewConfigError("failed to commit configuration files", err)
 	}
 
 	if p.logger != nil {
