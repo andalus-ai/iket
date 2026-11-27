@@ -5,6 +5,7 @@ type SecurityConfig struct {
 	TLS                                                TLSConfig                                                    `yaml:"tls"`
 	EnableBasicAuth                                    bool                                                         `yaml:"enableBasicAuth"`
 	BasicAuthUsers                                     map[string]string                                            `yaml:"basicAuthUsers"`
+	BasicAuthRoles                                     map[string]string                                            `yaml:"basicAuthRoles,omitempty" json:"basicAuthRoles,omitempty"` // username: viewer|operator|admin
 	IPWhitelist                                        []string                                                     `yaml:"ipWhitelist"`
 	Headers                                            map[string]string                                            `yaml:"headers"`
 	Clients                                            map[string]string                                            `yaml:"clients"` // clientID: clientSecret
