@@ -363,6 +363,13 @@ func listConfigRevisions() ([]map[string]interface{}, error) {
 		}
 		serviceCount := 0
 		routeCount := 0
+		integrityVerified := false
+		integrityOK := true
+		if strings.TrimSpace(record.ConfigHash) != "" && record.Config != nil {
+			integrityVerified = true
+			actualHash, hashErr := configFingerprint(record.Config)
+			integrityOK = hashErr == nil && strings.EqualFold(actualHash, record.ConfigHash)
+		}
 		if record.Config != nil {
 			for _, svcCfg := range record.Config.Services {
 				serviceCount += len(svcCfg.Services)
@@ -381,7 +388,9 @@ func listConfigRevisions() ([]map[string]interface{}, error) {
 			"summary":       record.Summary,
 			"service_count": serviceCount,
 			"route_count":   routeCount,
-			"config_hash":   record.ConfigHash,
+			"config_hash":        record.ConfigHash,
+			"integrity_verified": integrityVerified,
+			"integrity_ok":       integrityOK,
 		})
 	}
 	sort.SliceStable(revisions, func(i, j int) bool {
@@ -471,6 +480,9 @@ func validRevisionID(id string) bool {
 func writeSnapshotFile(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	if err := os.Chmod(dir, 0700); err != nil {
 		return err
 	}
 	temp, err := os.CreateTemp(dir, ".snapshot-*.tmp")
