@@ -193,7 +193,7 @@ type configRevisionRecord struct {
 }
 
 func createConfigBackup(cfg *config.Config) (string, string, int64, error) {
-	if err := os.MkdirAll(backupsDir(), 0755); err != nil {
+	if err := os.MkdirAll(backupsDir(), 0700); err != nil {
 		return "", "", 0, err
 	}
 	if cfg == nil {
@@ -212,7 +212,7 @@ func createConfigBackup(cfg *config.Config) (string, string, int64, error) {
 }
 
 func listConfigBackups() ([]map[string]interface{}, error) {
-	if err := os.MkdirAll(backupsDir(), 0755); err != nil {
+	if err := os.MkdirAll(backupsDir(), 0700); err != nil {
 		return nil, err
 	}
 	files, err := os.ReadDir(backupsDir())
@@ -261,7 +261,7 @@ func saveConfigRevision(action, label, note, changeRef string, summary map[strin
 	if cfg == nil {
 		return "", fmt.Errorf("configuration not available")
 	}
-	if err := os.MkdirAll(revisionsDir(), 0755); err != nil {
+	if err := os.MkdirAll(revisionsDir(), 0700); err != nil {
 		return "", err
 	}
 	id := fmt.Sprintf("rev-%s", time.Now().UTC().Format("20060102-150405.000000000"))
@@ -295,7 +295,7 @@ func saveConfigRevision(action, label, note, changeRef string, summary map[strin
 }
 
 func listConfigRevisions() ([]map[string]interface{}, error) {
-	if err := os.MkdirAll(revisionsDir(), 0755); err != nil {
+	if err := os.MkdirAll(revisionsDir(), 0700); err != nil {
 		return nil, err
 	}
 	files, err := os.ReadDir(revisionsDir())
