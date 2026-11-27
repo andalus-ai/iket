@@ -80,6 +80,7 @@ func isManagementAdminPath(path string) bool {
 		"/enrollment",
 		"/clients",
 		"/backup",
+		"/revisions", // revision records contain complete configuration snapshots, including secrets
 		"/extensions",
 		"/plugins", // plugin configuration and lifecycle can execute privileged code
 	} {
