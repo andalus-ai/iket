@@ -115,6 +115,8 @@ func TestManagementRBAC(t *testing.T) {
 		{"viewer can read status", "read", "viewer", http.MethodGet, "/api/v1/gateway/status", http.StatusNoContent},
 		{"viewer cannot mutate routes", "read", "viewer", http.MethodPost, "/api/v1/routes", http.StatusForbidden},
 		{"viewer cannot read sensitive gateway config", "read", "viewer", http.MethodGet, "/api/v1/gateway/config", http.StatusForbidden},
+		{"viewer cannot read configuration revisions", "read", "viewer", http.MethodGet, "/api/v1/revisions", http.StatusForbidden},
+		{"operator cannot read configuration revisions", "ops", "operator", http.MethodGet, "/api/v1/revisions/rev-20261128-101010.123456789", http.StatusForbidden},
 		{"operator can mutate routes", "ops", "operator", http.MethodPost, "/api/v1/routes", http.StatusNoContent},
 		{"operator cannot change gateway config", "ops", "operator", http.MethodPut, "/api/v1/gateway/config", http.StatusForbidden},
 		{"operator cannot manage certificates", "ops", "operator", http.MethodDelete, "/api/v1/certificates/cert-1", http.StatusForbidden},
@@ -167,6 +169,8 @@ func TestManagementRequiredRole(t *testing.T) {
 		{http.MethodGet, "/api/v1/clients", managementRoleAdmin},
 		{http.MethodGet, "/api/v1/certificates", managementRoleAdmin},
 		{http.MethodPost, "/api/v1/backup", managementRoleAdmin},
+		{http.MethodGet, "/api/v1/revisions", managementRoleAdmin},
+		{http.MethodPost, "/api/v1/revisions/rev-20261128-101010.123456789/restore", managementRoleAdmin},
 		{http.MethodGet, "/api/v1/gateway/config", managementRoleAdmin},
 		{http.MethodOptions, "/api/v1/routes", ""},
 	}
