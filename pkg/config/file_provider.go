@@ -153,50 +153,66 @@ func (p *FileProvider) Watch(callback func(*Config) error) error {
 	return nil
 }
 
-// watchFiles monitors configuration files for changes
+// watchFiles monitors every file participating in the configuration snapshot.
+// Failed loads and callbacks leave the previous baseline intact so updates retry.
 func (p *FileProvider) watchFiles() {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
-	var lastModTime time.Time
+	paths := []string{p.configPath}
+	if p.servicesPath != "" && p.servicesPath != p.configPath {
+		paths = append(paths, p.servicesPath)
+	}
+	observed := make(map[string]time.Time, len(paths))
 
 	for {
 		select {
 		case <-p.stopWatcher:
 			return
 		case <-ticker.C:
-			// Check if files have been modified
-			info, err := os.Stat(p.configPath)
+			current := make(map[string]time.Time, len(paths))
+			changed := false
+			statFailed := false
+			for _, path := range paths {
+				info, err := os.Stat(path)
+				if err != nil {
+					statFailed = true
+					if p.logger != nil {
+						p.logger.Error("Failed to stat configuration file", err)
+					}
+					break
+				}
+				current[path] = info.ModTime()
+				if previous, ok := observed[path]; !ok || !info.ModTime().Equal(previous) {
+					changed = true
+				}
+			}
+			if statFailed || !changed {
+				continue
+			}
+
+			cfg, err := p.Load()
 			if err != nil {
 				if p.logger != nil {
-					p.logger.Error("Failed to stat config file", err)
+					p.logger.Error("Failed to reload configuration", err)
 				}
 				continue
 			}
 
-			if info.ModTime().After(lastModTime) {
-				lastModTime = info.ModTime()
-
-				// Reload configuration
-				cfg, err := p.Load()
-				if err != nil {
+			p.mu.RLock()
+			watchers := append([]func(*Config) error(nil), p.watchers...)
+			p.mu.RUnlock()
+			callbackFailed := false
+			for _, watcher := range watchers {
+				if err := watcher(cfg); err != nil {
+					callbackFailed = true
 					if p.logger != nil {
-						p.logger.Error("Failed to reload configuration", err)
-					}
-					continue
-				}
-
-				// Notify all watchers
-				p.mu.RLock()
-				for _, watcher := range p.watchers {
-					if err := watcher(cfg); err != nil {
-						if p.logger != nil {
-							p.logger.Error("Configuration reload callback failed", err)
-						}
+						p.logger.Error("Configuration reload callback failed", err)
 					}
 				}
-				p.mu.RUnlock()
-
+			}
+			if !callbackFailed {
+				observed = current
 				if p.logger != nil {
 					p.logger.Info("Configuration reloaded successfully")
 				}
