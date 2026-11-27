@@ -408,8 +408,8 @@ func (api *ManagementAPI) resolveRevisionConfig(id string) (*config.Config, map[
 
 
 var (
-	backupIDPattern   = regexp.MustCompile(`^backup-[0-9]{8}-[0-9]{6}(?:\\.[0-9]{9})?$`)
-	revisionIDPattern = regexp.MustCompile(`^rev-[0-9]{8}-[0-9]{6}\\.[0-9]{9}$`)
+	backupIDPattern   = regexp.MustCompile(`^backup-[0-9]{8}-[0-9]{6}(?:\.[0-9]{9})?$`)
+	revisionIDPattern = regexp.MustCompile(`^rev-[0-9]{8}-[0-9]{6}\.[0-9]{9}$`)
 )
 
 func validBackupID(id string) bool {
