@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -151,6 +152,9 @@ func (api *ManagementAPI) diffRevisions(w http.ResponseWriter, r *http.Request) 
 }
 
 func (api *ManagementAPI) restoreRevision(w http.ResponseWriter, r *http.Request) {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+
 	record, err := loadConfigRevision(mux.Vars(r)["id"])
 	if err != nil {
 		api.writeManagedError(w, err, http.StatusNotFound)
@@ -160,20 +164,63 @@ func (api *ManagementAPI) restoreRevision(w http.ResponseWriter, r *http.Request
 		api.writeManagedError(w, managedError(coreerrors.CodeRevisionConfigMissing, "Revision has no stored configuration", nil), http.StatusInternalServerError)
 		return
 	}
+	if err := record.Config.Validate(); err != nil {
+		api.writeManagedError(w, managedValidationError("Revision contains an invalid configuration", err), http.StatusBadRequest)
+		return
+	}
+	current := api.gateway.GetConfig()
+	if current == nil {
+		api.writeManagedError(w, managedError(coreerrors.CodeConfigNotAvailable, "Configuration not available", nil), http.StatusInternalServerError)
+		return
+	}
+	currentETag, err := configETag(current)
+	if err != nil {
+		api.writeManagedError(w, managedConfigError("Failed to calculate current configuration revision", err), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("ETag", currentETag)
+	if supplied := strings.TrimSpace(r.Header.Get("If-Match")); supplied != "" && !ifMatchConfigETag(supplied, currentETag) {
+		api.writeManagedError(w, coreerrors.New(coreerrors.CodeConflict, "Configuration has changed since it was read").WithDetails(map[string]interface{}{
+			"current_revision": currentETag,
+			"expected_revision": supplied,
+		}), http.StatusConflict)
+		return
+	}
+
+	label, note, changeRef := revisionMetadataFromRequest(r)
+	if err := api.enforceMutationPolicy("restore_revision", label, note, changeRef); err != nil {
+		api.writeManagedError(w, err, http.StatusBadRequest)
+		return
+	}
+	checkpointSummary := map[string]interface{}{
+		"checkpoint_before_restore": record.ID,
+		"reason":                    "pre_restore",
+	}
+	if _, err := saveConfigRevision("pre_restore_checkpoint", "Before revision restore", note, changeRef, checkpointSummary, current); err != nil {
+		api.writeManagedError(w, managedConfigError("Failed to checkpoint current configuration before restore", err), http.StatusInternalServerError)
+		return
+	}
+
 	summary := map[string]interface{}{
 		"restored_from_revision": record.ID,
 		"original_action":        record.Action,
 	}
-	label, note, changeRef := revisionMetadataFromRequest(r)
-	if err := api.applyManagedConfigChange(record.Config, "restore_revision", label, note, changeRef, summary); err != nil {
+	if err := api.applyManagedConfigChangeAfterPolicy(record.Config, "restore_revision", label, note, changeRef, summary); err != nil {
 		api.writeManagedError(w, managedConfigError("Failed to restore revision", err), http.StatusInternalServerError)
 		return
 	}
+	newETag, err := configETag(record.Config)
+	if err != nil {
+		api.writeManagedError(w, managedConfigError("Revision restored but failed to calculate its ETag", err), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("ETag", newETag)
 	api.writeJSON(w, APIResponse{
 		Success: true,
 		Message: "Revision restored successfully",
 		Data: map[string]interface{}{
 			"revision_id": record.ID,
+			"revision":    newETag,
 			"summary":     summary,
 		},
 	})
@@ -187,27 +234,31 @@ type configRevisionRecord struct {
 	ChangeRef string                 `json:"change_ref,omitempty"`
 	CreatedAt time.Time              `json:"created_at"`
 	Summary   map[string]interface{} `json:"summary,omitempty"`
-	Config    *config.Config         `json:"config"`
+	Config     *config.Config         `json:"config"`
+	ConfigHash string                 `json:"config_hash,omitempty"`
 }
 
 func createConfigBackup(cfg *config.Config) (string, string, int64, error) {
-	if err := os.MkdirAll(backupsDir(), 0755); err != nil {
+	if err := os.MkdirAll(backupsDir(), 0700); err != nil {
 		return "", "", 0, err
 	}
-	id := fmt.Sprintf("backup-%s", time.Now().Format("20060102-150405"))
+	if cfg == nil {
+		return "", "", 0, fmt.Errorf("configuration not available")
+	}
+	id := fmt.Sprintf("backup-%s", time.Now().UTC().Format("20060102-150405.000000000"))
 	path := filepath.Join(backupsDir(), id+".json")
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return "", "", 0, err
 	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := writeSnapshotFile(path, data); err != nil {
 		return "", "", 0, err
 	}
 	return id, path, int64(len(data)), nil
 }
 
 func listConfigBackups() ([]map[string]interface{}, error) {
-	if err := os.MkdirAll(backupsDir(), 0755); err != nil {
+	if err := os.MkdirAll(backupsDir(), 0700); err != nil {
 		return nil, err
 	}
 	files, err := os.ReadDir(backupsDir())
@@ -234,6 +285,9 @@ func listConfigBackups() ([]map[string]interface{}, error) {
 }
 
 func restoreConfigBackup(gw interface { UpdateConfig(*config.Config) error }, id string) error {
+	if !validBackupID(id) {
+		return coreerrors.New(coreerrors.CodeBackupNotFound, "Backup not found")
+	}
 	path := filepath.Join(backupsDir(), id+".json")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -253,7 +307,7 @@ func saveConfigRevision(action, label, note, changeRef string, summary map[strin
 	if cfg == nil {
 		return "", fmt.Errorf("configuration not available")
 	}
-	if err := os.MkdirAll(revisionsDir(), 0755); err != nil {
+	if err := os.MkdirAll(revisionsDir(), 0700); err != nil {
 		return "", err
 	}
 	id := fmt.Sprintf("rev-%s", time.Now().UTC().Format("20060102-150405.000000000"))
@@ -261,28 +315,33 @@ func saveConfigRevision(action, label, note, changeRef string, summary map[strin
 	if err != nil {
 		return "", err
 	}
+	fingerprint, err := configFingerprint(cloned)
+	if err != nil {
+		return "", err
+	}
 	record := configRevisionRecord{
-		ID:        id,
-		Action:    action,
-		Label:     strings.TrimSpace(label),
-		Note:      strings.TrimSpace(note),
-		ChangeRef: strings.TrimSpace(changeRef),
-		CreatedAt: time.Now().UTC(),
-		Summary:   summary,
-		Config:    cloned,
+		ID:         id,
+		Action:     action,
+		Label:      strings.TrimSpace(label),
+		Note:       strings.TrimSpace(note),
+		ChangeRef:  strings.TrimSpace(changeRef),
+		CreatedAt:  time.Now().UTC(),
+		Summary:    summary,
+		Config:     cloned,
+		ConfigHash: fingerprint,
 	}
 	data, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(revisionsDir(), id+".json"), data, 0644); err != nil {
+	if err := writeSnapshotFile(filepath.Join(revisionsDir(), id+".json"), data); err != nil {
 		return "", err
 	}
 	return id, nil
 }
 
 func listConfigRevisions() ([]map[string]interface{}, error) {
-	if err := os.MkdirAll(revisionsDir(), 0755); err != nil {
+	if err := os.MkdirAll(revisionsDir(), 0700); err != nil {
 		return nil, err
 	}
 	files, err := os.ReadDir(revisionsDir())
@@ -304,6 +363,13 @@ func listConfigRevisions() ([]map[string]interface{}, error) {
 		}
 		serviceCount := 0
 		routeCount := 0
+		integrityVerified := false
+		integrityOK := true
+		if strings.TrimSpace(record.ConfigHash) != "" && record.Config != nil {
+			integrityVerified = true
+			actualHash, hashErr := configFingerprint(record.Config)
+			integrityOK = hashErr == nil && strings.EqualFold(actualHash, record.ConfigHash)
+		}
 		if record.Config != nil {
 			for _, svcCfg := range record.Config.Services {
 				serviceCount += len(svcCfg.Services)
@@ -322,6 +388,9 @@ func listConfigRevisions() ([]map[string]interface{}, error) {
 			"summary":       record.Summary,
 			"service_count": serviceCount,
 			"route_count":   routeCount,
+			"config_hash":        record.ConfigHash,
+			"integrity_verified": integrityVerified,
+			"integrity_ok":       integrityOK,
 		})
 	}
 	sort.SliceStable(revisions, func(i, j int) bool {
@@ -331,6 +400,9 @@ func listConfigRevisions() ([]map[string]interface{}, error) {
 }
 
 func loadConfigRevision(id string) (*configRevisionRecord, error) {
+	if !validRevisionID(id) {
+		return nil, coreerrors.New(coreerrors.CodeRevisionNotFound, "Revision not found")
+	}
 	data, err := os.ReadFile(filepath.Join(revisionsDir(), id+".json"))
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -341,6 +413,18 @@ func loadConfigRevision(id string) (*configRevisionRecord, error) {
 	var record configRevisionRecord
 	if err := json.Unmarshal(data, &record); err != nil {
 		return nil, err
+	}
+	if record.ID != id || record.Config == nil {
+		return nil, coreerrors.New(coreerrors.CodeRevisionConfigMissing, "Revision has no stored configuration")
+	}
+	if strings.TrimSpace(record.ConfigHash) != "" {
+		actualHash, err := configFingerprint(record.Config)
+		if err != nil {
+			return nil, err
+		}
+		if !strings.EqualFold(actualHash, record.ConfigHash) {
+			return nil, fmt.Errorf("revision %q failed configuration integrity verification", id)
+		}
 	}
 	return &record, nil
 }
@@ -375,4 +459,52 @@ func (api *ManagementAPI) resolveRevisionConfig(id string) (*config.Config, map[
 		"change_ref": record.ChangeRef,
 		"created_at": record.CreatedAt,
 	}, nil
+}
+
+
+var (
+	backupIDPattern   = regexp.MustCompile(`^backup-[0-9]{8}-[0-9]{6}(?:\.[0-9]{9})?$`)
+	revisionIDPattern = regexp.MustCompile(`^rev-[0-9]{8}-[0-9]{6}\.[0-9]{9}$`)
+)
+
+func validBackupID(id string) bool {
+	return backupIDPattern.MatchString(strings.TrimSpace(id))
+}
+
+func validRevisionID(id string) bool {
+	return revisionIDPattern.MatchString(strings.TrimSpace(id))
+}
+
+// writeSnapshotFile writes sensitive snapshot data with owner-only permissions
+// and atomically replaces the destination after the complete payload is synced.
+func writeSnapshotFile(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	if err := os.Chmod(dir, 0700); err != nil {
+		return err
+	}
+	temp, err := os.CreateTemp(dir, ".snapshot-*.tmp")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+	if err := temp.Chmod(0600); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if _, err := temp.Write(data); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tempPath, path)
 }
